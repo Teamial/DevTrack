@@ -82,7 +82,5 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Additional methods (e.g., committing changes) can be added here.
-   */
+  // ... other methods
 }

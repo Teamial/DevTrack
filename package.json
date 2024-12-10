@@ -19,13 +19,6 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "authentication": [
-      {
-        "id": "github",
-        "label": "GitHub",
-        "supportsMultipleAccounts": false
-      }
-    ],
     "commands": [
       {
         "command": "devtrack.startTracking",
