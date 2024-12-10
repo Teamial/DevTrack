@@ -1,6 +1,6 @@
-# devtrackr README
+# devtrack README
 
-This is the README for your extension "devtrackr". After writing up a brief description, we recommend including the following sections.
+This is the README for your extension "devtrack". After writing up a brief description, we recommend including the following sections.
 
 ## Features
 

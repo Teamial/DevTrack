@@ -21,7 +21,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Retrieve configuration settings from 'devtrack'
   const config = vscode.workspace.getConfiguration('devtrack');
   const repoName = config.get<string>('repoName') || 'code-tracking';
-  const commitFrequency = config.get<number>('commitFrequency') || 30;
+  const commitFrequency = config.get<number>('commitFrequency') || 1; // FIXME change back to 30
   const excludePatterns = config.get<string[]>('exclude') || [];
 
   console.log(`DevTrack Configuration:
