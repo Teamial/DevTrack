@@ -3,25 +3,70 @@
   "displayName": "DevTrackr",
   "description": "Track your coding journey effortlessly with DevTrackr. Automatically create a detailed timeline of your development activity, complete with GitHub integration. This extension logs your progress, generates concise summaries of your work every 30 minutes, and commits them to a Git repository of your choice. Perfect for developers who want a meticulous record of their productivity and insights into their workflow. Whether you're working on personal projects, contributing to open source, or managing tasks at work, DevTrackr ensures you never lose track of your progress.",
   "version": "0.0.1",
+  "publisher": "Teanna",
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Productivity"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:devtrackr.startTracking",
+    "onCommand:devtrackr.stopTracking"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "devtrackr.helloWorld",
-        "title": "Hello World"
+        "command": "devtrackr.startTracking",
+        "title": "DevTrackr: Start Tracking"
+      },
+      {
+        "command": "devtrackr.stopTracking",
+        "title": "DevTrackr: Stop Tracking"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "DevTrackr Configuration",
+      "properties": {
+        "devtrackr.username": {
+          "type": "string",
+          "default": "",
+          "description": "Your GitHub username."
+        },
+        "devtrackr.githubToken": {
+          "type": "string",
+          "default": "",
+          "description": "Personal Access Token for GitHub API."
+        },
+        "devtrackr.repoName": {
+          "type": "string",
+          "default": "code-tracking",
+          "description": "Name of the GitHub repository to store tracking logs."
+        },
+        "devtrackr.commitFrequency": {
+          "type": "number",
+          "default": 30,
+          "description": "Commit frequency in minutes."
+        },
+        "devtrackr.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of glob patterns to exclude from tracking."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "build": "npm run compile",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
@@ -33,17 +78,25 @@
     "lint": "eslint src",
     "test": "vscode-test"
   },
+  "dependencies": {
+    "@octokit/rest": "^19.0.7",
+    "diff": "^5.0.0",
+    "minimatch": "^5.1.0",
+    "node-schedule": "^2.1.0",
+    "simple-git": "^3.19.0"
+  },
   "devDependencies": {
-    "@types/vscode": "^1.95.0",
+    "@types/minimatch": "^5.1.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/vscode": "^1.95.0",
     "@typescript-eslint/eslint-plugin": "^8.17.0",
     "@typescript-eslint/parser": "^8.17.0",
-    "eslint": "^9.16.0",
-    "esbuild": "^0.24.0",
-    "npm-run-all": "^4.1.5",
-    "typescript": "^5.7.2",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.16.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.7.2"
   }
 }
