@@ -2,15 +2,17 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import { EventEmitter } from 'events';
+import { OutputChannel } from 'vscode';
 
 export class GitService extends EventEmitter {
   private git: SimpleGit;
   private repoPath: string;
+  private outputChannel: OutputChannel;
 
-  constructor() {
+  constructor(outputChannel: OutputChannel) {
     super();
+    this.outputChannel = outputChannel;
     const workspaceFolders = vscode.workspace.workspaceFolders;
     
     if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -36,33 +38,37 @@ export class GitService extends EventEmitter {
       const isRepo = await this.git.checkIsRepo();
       if (!isRepo) {
         await this.git.init();
-        console.log('DevTrack: Initialized new Git repository.');
+        this.outputChannel.appendLine('DevTrack: Initialized new Git repository.');
         await this.git.addRemote('origin', remoteUrl);
-        console.log(`DevTrack: Added remote origin ${remoteUrl}.`);
+        this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}.`);
         await this.git.add('.');
         await this.git.commit('DevTrack: Initial commit', ['--allow-empty']);
-        console.log('DevTrack: Made initial commit.');
+        this.outputChannel.appendLine('DevTrack: Made initial commit.');
         await this.git.push(['-u', 'origin', 'main']);
-        console.log('DevTrack: Pushed initial commit to remote.');
+        this.outputChannel.appendLine('DevTrack: Pushed initial commit to remote.');
       } else {
-        console.log('DevTrack: Git repository already initialized.');
+        this.outputChannel.appendLine('DevTrack: Git repository already initialized.');
       }
     } catch (error: any) {
-      console.error('DevTrack: Error initializing Git repository:', error.message);
+      this.outputChannel.appendLine(`DevTrack: Failed to initialize Git repository. ${error.message}`);
       vscode.window.showErrorMessage(`DevTrack: Failed to initialize Git repository. ${error.message}`);
       throw error;
     }
   }
 
-  async addAndCommit(message: string): Promise<void> {
+  /**
+   * Commits and pushes changes with the provided message.
+   * @param message Commit message.
+   */
+  async commitAndPush(message: string): Promise<void> {
     try {
       await this.git.add('.');
       await this.git.commit(message);
       await this.git.push();
       this.emit('commit', message);
-      console.log(`DevTrack: Committed changes with message: "${message}"`);
+      this.outputChannel.appendLine(`DevTrack: Committed changes with message: "${message}"`);
     } catch (error: any) {
-      console.error("DevTrack: Git commit failed:", error.message);
+      this.outputChannel.appendLine(`DevTrack: Git commit failed. ${error.message}`);
       vscode.window.showErrorMessage(`DevTrack: Git commit failed. ${error.message}`);
     }
   }

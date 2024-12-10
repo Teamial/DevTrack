@@ -1,12 +1,15 @@
 // services/githubService.ts
 import { Octokit } from "@octokit/rest";
 import * as vscode from "vscode";
+import { OutputChannel } from "vscode";
 
 export class GitHubService {
   private octokit!: Octokit;
   private token: string = '';
+  private outputChannel: OutputChannel;
 
-  constructor() {
+  constructor(outputChannel: OutputChannel) {
+    this.outputChannel = outputChannel;
     // Token will be set via setToken method
   }
 
@@ -34,7 +37,7 @@ export class GitHubService {
       });
       return response.data.clone_url;
     } catch (error: any) {
-      console.error("Error creating repository:", error.message);
+      this.outputChannel.appendLine(`Error creating repository: ${error.message}`);
       vscode.window.showErrorMessage(`DevTrack: Failed to create repository "${repoName}".`);
       return null;
     }
@@ -61,7 +64,6 @@ export class GitHubService {
       if (error.status === 404) {
         return false;
       }
-      console.error("Error checking repository existence:", error.message);
       vscode.window.showErrorMessage(`DevTrack: Error checking repository "${repoName}".`);
       return false;
     }
@@ -76,7 +78,7 @@ export class GitHubService {
       const { data } = await this.octokit.users.getAuthenticated();
       return data.login;
     } catch (error: any) {
-      console.error("Error fetching username:", error.message);
+      this.outputChannel.appendLine(`Error fetching username: ${error.message}`);
       vscode.window.showErrorMessage('DevTrack: Unable to fetch GitHub username.');
       return null;
     }

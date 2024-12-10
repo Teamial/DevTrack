@@ -10,24 +10,29 @@ import { Scheduler } from './services/scheduler';
  * This method is called when your extension is activated.
  */
 export async function activate(context: vscode.ExtensionContext) {
-  console.log('DevTrack is now active!');
+  // Create Output Channel
+  const outputChannel = vscode.window.createOutputChannel('DevTrack');
+  context.subscriptions.push(outputChannel);
+  outputChannel.appendLine('DevTrack: Extension activated.');
 
-  // Initialize services
-  const githubService = new GitHubService();
-  const gitService = new GitService();
-  const tracker = new Tracker();
-  const summaryGenerator = new SummaryGenerator();
+  // Initialize services with OutputChannel for logging
+  const githubService = new GitHubService(outputChannel);
+  const gitService = new GitService(outputChannel);
+  const tracker = new Tracker(outputChannel);
+  const summaryGenerator = new SummaryGenerator(outputChannel);
 
   // Retrieve configuration settings from 'devtrack'
   const config = vscode.workspace.getConfiguration('devtrack');
   const repoName = config.get<string>('repoName') || 'code-tracking';
-  const commitFrequency = config.get<number>('commitFrequency') || 1; // FIXME change back to 30
+  const commitFrequency = config.get<number>('commitFrequency') || 30; // Default to 30 minutes
   const excludePatterns = config.get<string[]>('exclude') || [];
+  const confirmBeforeCommit = config.get<boolean>('confirmBeforeCommit') || true;
 
-  console.log(`DevTrack Configuration:
+  outputChannel.appendLine(`DevTrack Configuration:
     Repository Name: ${repoName}
     Commit Frequency: ${commitFrequency} minutes
     Exclude Patterns: ${excludePatterns.join(', ') || 'None'}
+    Confirm Before Commit: ${confirmBeforeCommit}
   `);
 
   // Use VS Code's Authentication API for GitHub
@@ -56,11 +61,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
   try {
     // Check for existing sessions silently
-    const sessions = await auth.getSession('github', [], { silent: true });
-    session = sessions;
-
+    // extension.ts
+  session = await auth.getSession('github', ['repo', 'read:user'], { createIfNone: false });
     if (session) {
-      console.log('DevTrack: Using existing GitHub session.');
+      outputChannel.appendLine('DevTrack: Using existing GitHub session.');
       authStatusBar.text = '$(check) DevTrack: Authenticated';
       authStatusBar.tooltip = 'DevTrack: GitHub authenticated';
 
@@ -71,10 +75,11 @@ export async function activate(context: vscode.ExtensionContext) {
       const username = await githubService.getUsername();
       if (!username) {
         vscode.window.showErrorMessage('DevTrack: Unable to retrieve GitHub username. Please ensure your token is valid.');
+        outputChannel.appendLine('DevTrack: Unable to retrieve GitHub username.');
         return;
       }
 
-      console.log(`Authenticated GitHub Username: ${username}`);
+      outputChannel.appendLine(`Authenticated GitHub Username: ${username}`);
 
       // Check if repository exists, if not create it
       const repoExists = await githubService.repoExists(repoName);
@@ -83,27 +88,28 @@ export async function activate(context: vscode.ExtensionContext) {
         const createdRepoUrl = await githubService.createRepo(repoName);
         if (createdRepoUrl) {
           remoteUrl = createdRepoUrl;
-          console.log(`DevTrack: Created new repository at ${remoteUrl}`);
+          outputChannel.appendLine(`DevTrack: Created new repository at ${remoteUrl}`);
         } else {
           vscode.window.showErrorMessage('DevTrack: Failed to create GitHub repository.');
+          outputChannel.appendLine('DevTrack: Failed to create GitHub repository.');
           return;
         }
       } else {
-        console.log(`DevTrack: Repository "${repoName}" already exists.`);
+        outputChannel.appendLine(`DevTrack: Repository "${repoName}" already exists.`);
       }
 
       // Initialize local Git repository
       try {
         await gitService.initializeRepo(remoteUrl);
       } catch (error) {
-        console.error('DevTrack: Failed to initialize Git repository.');
+        outputChannel.appendLine('DevTrack: Failed to initialize Git repository.');
         return;
       }
 
       // Initialize Scheduler
-      scheduler = new Scheduler(commitFrequency, tracker, summaryGenerator, gitService);
+      scheduler = new Scheduler(commitFrequency, tracker, summaryGenerator, gitService, outputChannel);
       scheduler.start();
-      console.log('DevTrack: Scheduler started.');
+      outputChannel.appendLine('DevTrack: Scheduler started.');
 
       // Update Tracking Status Bar to indicate tracking is active
       trackingStatusBar.text = '$(clock) DevTrack: Tracking';
@@ -113,7 +119,7 @@ export async function activate(context: vscode.ExtensionContext) {
       gitService.on('commit', (message: string) => {
         const now = new Date();
         trackingStatusBar.text = `$(check) Last Commit: ${now.toLocaleTimeString()}`;
-        console.log(`DevTrack: Last commit at ${now.toLocaleTimeString()} with message: "${message}"`);
+        outputChannel.appendLine(`DevTrack: Last commit at ${now.toLocaleTimeString()} with message: "${message}"`);
       });
     } else {
       // User is not authenticated
@@ -130,9 +136,10 @@ export async function activate(context: vscode.ExtensionContext) {
         trackingStatusBar.text = '$(clock) DevTrack: Tracking';
         trackingStatusBar.tooltip = 'DevTrack: Tracking your coding activity is active';
         vscode.window.showInformationMessage('DevTrack: Tracking started.');
-        console.log('DevTrack: Tracking started manually.');
+        outputChannel.appendLine('DevTrack: Tracking started manually.');
       } else {
         vscode.window.showErrorMessage('DevTrack: Scheduler is not initialized.');
+        outputChannel.appendLine('DevTrack: Scheduler is not initialized.');
       }
     });
 
@@ -143,9 +150,10 @@ export async function activate(context: vscode.ExtensionContext) {
         trackingStatusBar.text = '$(circle-slash) DevTrack: Stopped';
         trackingStatusBar.tooltip = 'DevTrack: Tracking is stopped';
         vscode.window.showInformationMessage('DevTrack: Tracking stopped.');
-        console.log('DevTrack: Tracking stopped manually.');
+        outputChannel.appendLine('DevTrack: Tracking stopped manually.');
       } else {
         vscode.window.showErrorMessage('DevTrack: Scheduler is not initialized.');
+        outputChannel.appendLine('DevTrack: Scheduler is not initialized.');
       }
     });
 
@@ -160,7 +168,7 @@ export async function activate(context: vscode.ExtensionContext) {
           const newUsername = await githubService.getUsername();
           if (newUsername) {
             vscode.window.showInformationMessage(`DevTrack: Logged in as ${newUsername}`);
-            console.log(`DevTrack: Logged in as ${newUsername}`);
+            outputChannel.appendLine(`DevTrack: Logged in as ${newUsername}`);
             authStatusBar.text = '$(check) DevTrack: Authenticated';
             authStatusBar.tooltip = 'DevTrack: GitHub authenticated';
 
@@ -171,39 +179,42 @@ export async function activate(context: vscode.ExtensionContext) {
               const createdRepoUrl = await githubService.createRepo(repoName);
               if (createdRepoUrl) {
                 remoteUrl = createdRepoUrl;
-                console.log(`DevTrack: Created new repository at ${remoteUrl}`);
+                outputChannel.appendLine(`DevTrack: Created new repository at ${remoteUrl}`);
               } else {
                 vscode.window.showErrorMessage('DevTrack: Failed to create GitHub repository.');
+                outputChannel.appendLine('DevTrack: Failed to create GitHub repository.');
                 return;
               }
             } else {
-              console.log(`DevTrack: Repository "${repoName}" already exists.`);
+              outputChannel.appendLine(`DevTrack: Repository "${repoName}" already exists.`);
             }
 
             // Initialize local Git repository
             try {
               await gitService.initializeRepo(remoteUrl);
             } catch (error) {
-              console.error('DevTrack: Failed to initialize Git repository.');
+              outputChannel.appendLine('DevTrack: Failed to initialize Git repository.');
               return;
             }
 
             // Initialize Scheduler
-            scheduler = new Scheduler(commitFrequency, tracker, summaryGenerator, gitService);
+            scheduler = new Scheduler(commitFrequency, tracker, summaryGenerator, gitService, outputChannel);
             scheduler.start();
-            console.log('DevTrack: Scheduler started.');
+            outputChannel.appendLine('DevTrack: Scheduler started.');
 
             // Update Tracking Status Bar to indicate tracking is active
             trackingStatusBar.text = '$(clock) DevTrack: Tracking';
             trackingStatusBar.tooltip = 'DevTrack: Tracking your coding activity is active';
           } else {
             vscode.window.showErrorMessage('DevTrack: Unable to retrieve GitHub username.');
+            outputChannel.appendLine('DevTrack: Unable to retrieve GitHub username.');
           }
         } else {
           vscode.window.showErrorMessage('DevTrack: GitHub authentication failed.');
+          outputChannel.appendLine('DevTrack: GitHub authentication failed.');
         }
       } catch (error) {
-        console.error('DevTrack: GitHub login failed:', error);
+        outputChannel.appendLine(`DevTrack: GitHub login failed. ${error}`);
         vscode.window.showErrorMessage('DevTrack: GitHub login failed.');
       }
     });
@@ -220,31 +231,31 @@ export async function activate(context: vscode.ExtensionContext) {
         const newRepoName = newConfig.get<string>('repoName') || 'code-tracking';
         const newCommitFrequency = newConfig.get<number>('commitFrequency') || 30;
         const newExcludePatterns = newConfig.get<string[]>('exclude') || [];
+        const newConfirmBeforeCommit = newConfig.get<boolean>('confirmBeforeCommit') || true;
 
-        console.log('DevTrack: Configuration updated.');
-
-        // Update GitHub token if re-authenticated
-        if (session) {
-          githubService.setToken(session.accessToken);
-        }
+        outputChannel.appendLine('DevTrack: Configuration updated.');
 
         // Update scheduler if commit frequency has changed
         if (scheduler && newCommitFrequency !== commitFrequency) {
           scheduler.updateFrequency(newCommitFrequency);
-          console.log(`DevTrack: Commit frequency updated to ${newCommitFrequency} minutes.`);
+          outputChannel.appendLine(`DevTrack: Commit frequency updated to ${newCommitFrequency} minutes.`);
         }
 
-        // Handle exclude patterns if necessary
+        // Update Tracker's exclude patterns
         if (tracker && JSON.stringify(newExcludePatterns) !== JSON.stringify(excludePatterns)) {
           tracker.updateExcludePatterns(newExcludePatterns);
-          console.log('DevTrack: Exclude patterns updated.');
+          outputChannel.appendLine('DevTrack: Exclude patterns updated.');
         }
 
-        // Optionally check if repoName changed and handle it if needed (e.g., re-init repository)
+        // Handle repository name changes if necessary
+        if (newRepoName !== repoName) {
+          vscode.window.showWarningMessage('DevTrack: Repository name changed. Please restart the extension to apply changes.');
+          outputChannel.appendLine('DevTrack: Repository name changed.');
+        }
       }
     });
   } catch (error) {
-    console.error('DevTrack: GitHub authentication failed:', error);
+    outputChannel.appendLine(`DevTrack: GitHub authentication failed. ${error}`);
     vscode.window.showErrorMessage('DevTrack: GitHub authentication failed.');
   }
 }

@@ -45,7 +45,12 @@
         "devtrack.commitFrequency": {
           "type": "number",
           "default": 30,
-          "description": "Commit frequency in minutes."
+          "description": "How often (in minutes) to commit your coding history."
+        },
+        "devtrack.confirmBeforeCommit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a confirmation dialog before each automatic commit."
         },
         "devtrack.exclude": {
           "type": "array",
