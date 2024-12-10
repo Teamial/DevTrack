@@ -1,3 +1,4 @@
+// src/services/tracker.ts
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
 import minimatch from 'minimatch';
@@ -11,6 +12,7 @@ export interface Change {
 export class Tracker extends EventEmitter {
   private changes: Change[] = [];
   private watcher!: vscode.FileSystemWatcher;
+  private excludePatterns: string[] = [];
 
   constructor() {
     super();
@@ -19,18 +21,18 @@ export class Tracker extends EventEmitter {
 
   private initializeWatcher() {
     const config = vscode.workspace.getConfiguration('devtrackr');
-    const excludePatterns: string[] = config.get<string[]>('exclude') || [];
+    this.excludePatterns = config.get<string[]>('exclude') || [];
 
     this.watcher = vscode.workspace.createFileSystemWatcher('**/*', false, false, false);
 
-    this.watcher.onDidChange(uri => this.handleChange(uri, 'changed', excludePatterns));
-    this.watcher.onDidCreate(uri => this.handleChange(uri, 'added', excludePatterns));
-    this.watcher.onDidDelete(uri => this.handleChange(uri, 'deleted', excludePatterns));
+    this.watcher.onDidChange(uri => this.handleChange(uri, 'changed'));
+    this.watcher.onDidCreate(uri => this.handleChange(uri, 'added'));
+    this.watcher.onDidDelete(uri => this.handleChange(uri, 'deleted'));
   }
 
-  private handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted', excludePatterns: string[]) {
+  private handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
     const relativePath = vscode.workspace.asRelativePath(uri);
-    const isExcluded = excludePatterns.some(pattern => minimatch(relativePath, pattern));
+    const isExcluded = this.excludePatterns.some(pattern => minimatch(relativePath, pattern));
     if (!isExcluded) {
       const change: Change = {
         uri,
@@ -46,5 +48,14 @@ export class Tracker extends EventEmitter {
     const currentChanges = [...this.changes];
     this.changes = [];
     return currentChanges;
+  }
+
+  /**
+   * Updates the exclude patterns used to filter out files from tracking.
+   * @param newPatterns Array of glob patterns to exclude.
+   */
+  updateExcludePatterns(newPatterns: string[]) {
+    this.excludePatterns = newPatterns;
+    console.log('DevTrackr: Updated exclude patterns.');
   }
 }
