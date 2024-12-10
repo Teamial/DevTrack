@@ -1,3 +1,4 @@
+// services/githubService.ts
 import { Octokit } from "@octokit/rest";
 import * as vscode from "vscode";
 
@@ -9,12 +10,22 @@ export class GitHubService {
     // Token will be set via setToken method
   }
 
+  /**
+   * Sets the GitHub token and initializes Octokit.
+   * @param token - The GitHub access token obtained via OAuth.
+   */
   setToken(token: string) {
-    this.token = vscode.workspace.getConfiguration('devtrackr').get<string>('githubToken') || '';
+    this.token = token;
     this.octokit = new Octokit({ auth: this.token });
   }
 
-  async createRepo(repoName: string, description: string = "DevTrackr Repository"): Promise<string | null> {
+  /**
+   * Creates a new repository for the authenticated user.
+   * @param repoName - The name of the repository to create.
+   * @param description - (Optional) Description of the repository.
+   * @returns The clone URL of the created repository or null if creation failed.
+   */
+  async createRepo(repoName: string, description: string = "DevTrack Repository"): Promise<string | null> {
     try {
       const response = await this.octokit.repos.createForAuthenticatedUser({
         name: repoName,
@@ -24,16 +35,26 @@ export class GitHubService {
       return response.data.clone_url;
     } catch (error: any) {
       console.error("Error creating repository:", error.message);
-      vscode.window.showErrorMessage(`DevTrackr: Failed to create repository "${repoName}".`);
+      vscode.window.showErrorMessage(`DevTrack: Failed to create repository "${repoName}".`);
       return null;
     }
   }
 
+  /**
+   * Checks if a repository exists for the authenticated user.
+   * @param repoName - The name of the repository to check.
+   * @returns True if the repository exists, false otherwise.
+   */
   async repoExists(repoName: string): Promise<boolean> {
     try {
-      await this.octokit.repos.createForAuthenticatedUser({
+      const username = await this.getUsername();
+      if (!username) {
+        vscode.window.showErrorMessage('DevTrack: Unable to retrieve GitHub username.');
+        return false;
+      }
+      await this.octokit.repos.get({
+        owner: username,
         repo: repoName,
-        name: ""
       });
       return true;
     } catch (error: any) {
@@ -41,18 +62,27 @@ export class GitHubService {
         return false;
       }
       console.error("Error checking repository existence:", error.message);
-      vscode.window.showErrorMessage(`DevTrackr: Error checking repository "${repoName}".`);
+      vscode.window.showErrorMessage(`DevTrack: Error checking repository "${repoName}".`);
       return false;
     }
   }
+
+  /**
+   * Retrieves the authenticated user's GitHub username.
+   * @returns The GitHub username or null if retrieval failed.
+   */
   async getUsername(): Promise<string | null> {
     try {
       const { data } = await this.octokit.users.getAuthenticated();
       return data.login;
     } catch (error: any) {
       console.error("Error fetching username:", error.message);
-      vscode.window.showErrorMessage('DevTrackr: Unable to fetch GitHub username.');
+      vscode.window.showErrorMessage('DevTrack: Unable to fetch GitHub username.');
       return null;
     }
   }
+
+  /**
+   * Additional methods (e.g., committing changes) can be added here.
+   */
 }

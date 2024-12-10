@@ -14,10 +14,18 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:devtrack.startTracking",
-    "onCommand:devtrack.stopTracking"
+    "onCommand:devtrack.stopTracking",
+    "onCommand:devtrack.login"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "authentication": [
+      {
+        "id": "github",
+        "label": "GitHub",
+        "supportsMultipleAccounts": false
+      }
+    ],
     "commands": [
       {
         "command": "devtrack.startTracking",
@@ -26,17 +34,16 @@
       {
         "command": "devtrack.stopTracking",
         "title": "DevTrack: Stop Tracking"
+      },
+      {
+        "command": "devtrack.login",
+        "title": "DevTrack: Login to GitHub"
       }
     ],
     "configuration": {
       "type": "object",
       "title": "DevTrack Configuration",
       "properties": {
-        "devtrack.username": {
-          "type": "string",
-          "default": "",
-          "description": "Your GitHub username."
-        },
         "devtrack.repoName": {
           "type": "string",
           "default": "code-tracking",
