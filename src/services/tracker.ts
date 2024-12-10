@@ -20,7 +20,7 @@ export class Tracker extends EventEmitter {
   }
 
   private initializeWatcher() {
-    const config = vscode.workspace.getConfiguration('devtrackr');
+    const config = vscode.workspace.getConfiguration('devtrack'); // Changed 'devtrackr' to 'devtrack' for consistency
     this.excludePatterns = config.get<string[]>('exclude') || [];
 
     this.watcher = vscode.workspace.createFileSystemWatcher('**/*', false, false, false);
@@ -28,6 +28,8 @@ export class Tracker extends EventEmitter {
     this.watcher.onDidChange(uri => this.handleChange(uri, 'changed'));
     this.watcher.onDidCreate(uri => this.handleChange(uri, 'added'));
     this.watcher.onDidDelete(uri => this.handleChange(uri, 'deleted'));
+
+    console.log('DevTrack: File system watcher initialized.');
   }
 
   private handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
@@ -41,13 +43,23 @@ export class Tracker extends EventEmitter {
       };
       this.changes.push(change);
       this.emit('change', change);
+      console.log(`DevTrack: Detected ${type} in ${relativePath}.`);
     }
   }
 
-  getChangesAndClear(): Change[] {
-    const currentChanges = [...this.changes];
+  /**
+   * Returns the list of changed files.
+   */
+  getChangedFiles(): Change[] {
+    return [...this.changes];
+  }
+
+  /**
+   * Clears the tracked changes.
+   */
+  clearChanges(): void {
     this.changes = [];
-    return currentChanges;
+    console.log('DevTrack: Cleared tracked changes.');
   }
 
   /**
@@ -56,6 +68,14 @@ export class Tracker extends EventEmitter {
    */
   updateExcludePatterns(newPatterns: string[]) {
     this.excludePatterns = newPatterns;
-    console.log('DevTrackr: Updated exclude patterns.');
+    console.log('DevTrack: Updated exclude patterns.');
+  }
+
+  /**
+   * Dispose method to clean up resources.
+   */
+  dispose() {
+    this.watcher.dispose();
+    console.log('DevTrack: Disposed file system watcher.');
   }
 }

@@ -1,3 +1,4 @@
+// services/gitService.ts
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -13,25 +14,20 @@ export class GitService extends EventEmitter {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     
     if (!workspaceFolders || workspaceFolders.length === 0) {
-      vscode.window.showErrorMessage('DevTrackr: No workspace folder is open. Please open a folder to start tracking.');
+      vscode.window.showErrorMessage('DevTrack: No workspace folder is open. Please open a folder to start tracking.');
       throw new Error('No workspace folder open.');
     }
 
     const workspaceFolder = workspaceFolders[0].uri.fsPath;
-    this.repoPath = path.join(workspaceFolder, 'code-tracking');
+    this.repoPath = workspaceFolder; // Initialize at workspace root
 
     // Ensure the repository path is absolute
     if (!path.isAbsolute(this.repoPath)) {
-      vscode.window.showErrorMessage('DevTrackr: The repository path is not absolute.');
+      vscode.window.showErrorMessage('DevTrack: The repository path is not absolute.');
       throw new Error('Invalid repository path.');
     }
 
-    // Ensure the directory exists before creating the git instance
-    if (!fs.existsSync(this.repoPath)) {
-      fs.mkdirSync(this.repoPath, { recursive: true });
-      console.log(`DevTrackr: Created directory at ${this.repoPath}`);
-    }
-
+    // Initialize Git instance at workspace root
     this.git = simpleGit(this.repoPath);
   }
 
@@ -40,16 +36,20 @@ export class GitService extends EventEmitter {
       const isRepo = await this.git.checkIsRepo();
       if (!isRepo) {
         await this.git.init();
+        console.log('DevTrack: Initialized new Git repository.');
         await this.git.addRemote('origin', remoteUrl);
-        await this.git.commit('Initial commit', ['--allow-empty']);
+        console.log(`DevTrack: Added remote origin ${remoteUrl}.`);
+        await this.git.add('.');
+        await this.git.commit('DevTrack: Initial commit', ['--allow-empty']);
+        console.log('DevTrack: Made initial commit.');
         await this.git.push(['-u', 'origin', 'main']);
-        console.log('DevTrackr: Initialized new Git repository and pushed to remote.');
+        console.log('DevTrack: Pushed initial commit to remote.');
       } else {
-        console.log('DevTrackr: Git repository already initialized.');
+        console.log('DevTrack: Git repository already initialized.');
       }
     } catch (error: any) {
-      console.error('DevTrackr: Error initializing Git repository:', error.message);
-      vscode.window.showErrorMessage(`DevTrackr: Failed to initialize Git repository. ${error.message}`);
+      console.error('DevTrack: Error initializing Git repository:', error.message);
+      vscode.window.showErrorMessage(`DevTrack: Failed to initialize Git repository. ${error.message}`);
       throw error;
     }
   }
@@ -60,10 +60,10 @@ export class GitService extends EventEmitter {
       await this.git.commit(message);
       await this.git.push();
       this.emit('commit', message);
-      console.log(`DevTrackr: Committed changes with message: "${message}"`);
+      console.log(`DevTrack: Committed changes with message: "${message}"`);
     } catch (error: any) {
-      console.error("DevTrackr: Git commit failed:", error.message);
-      vscode.window.showErrorMessage(`DevTrackr: Git commit failed. ${error.message}`);
+      console.error("DevTrack: Git commit failed:", error.message);
+      vscode.window.showErrorMessage(`DevTrack: Git commit failed. ${error.message}`);
     }
   }
 }
