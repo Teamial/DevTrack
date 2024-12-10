@@ -33,22 +33,64 @@ export class GitService extends EventEmitter {
     this.git = simpleGit(this.repoPath);
   }
 
+  /**
+   * Initializes the Git repository and sets the remote origin.
+   * @param remoteUrl The GitHub repository URL to set as remote origin.
+   */
   async initializeRepo(remoteUrl: string): Promise<void> {
     try {
       const isRepo = await this.git.checkIsRepo();
       if (!isRepo) {
+        // Initialize a new Git repository
         await this.git.init();
         this.outputChannel.appendLine('DevTrack: Initialized new Git repository.');
-        await this.git.addRemote('origin', remoteUrl);
-        this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}.`);
-        await this.git.add('.');
-        await this.git.commit('DevTrack: Initial commit', ['--allow-empty']);
-        this.outputChannel.appendLine('DevTrack: Made initial commit.');
-        await this.git.push(['-u', 'origin', 'main']);
-        this.outputChannel.appendLine('DevTrack: Pushed initial commit to remote.');
       } else {
         this.outputChannel.appendLine('DevTrack: Git repository already initialized.');
       }
+
+      // Fetch existing remotes
+      const remotes = await this.git.getRemotes(true);
+      const originRemote = remotes.find(remote => remote.name === 'origin');
+
+      if (originRemote) {
+        if (originRemote.refs.fetch !== remoteUrl) {
+          // Remove existing incorrect remote
+          await this.git.removeRemote('origin');
+          this.outputChannel.appendLine('DevTrack: Removed existing remote origin.');
+          
+          // Add the correct remote
+          await this.git.addRemote('origin', remoteUrl);
+          this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}.`);
+        } else {
+          this.outputChannel.appendLine('DevTrack: Remote origin is already set correctly.');
+        }
+      } else {
+        // Add remote origin if it doesn't exist
+        await this.git.addRemote('origin', remoteUrl);
+        this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}.`);
+      }
+
+      // Check if the default branch is 'main'; if not, create and switch to 'main'
+      const branchSummary = await this.git.branchLocal();
+      if (!branchSummary.current || branchSummary.current !== 'main') {
+        await this.git.checkoutLocalBranch('main');
+        this.outputChannel.appendLine('DevTrack: Created and switched to branch "main".');
+      }
+
+      // Stage all changes
+      await this.git.add('.');
+      this.outputChannel.appendLine('DevTrack: Staged all changes.');
+
+      // Commit changes
+      const commitMessage = 'DevTrack: Initial commit';
+      const commitSummary = await this.git.commit(commitMessage, ['--allow-empty']);
+      if (commitSummary.commit) {
+        this.outputChannel.appendLine(`DevTrack: Made initial commit with message "${commitMessage}".`);
+      }
+
+      // Push to remote
+      await this.git.push(['-u', 'origin', 'main']);
+      this.outputChannel.appendLine('DevTrack: Pushed initial commit to remote.');
     } catch (error: any) {
       this.outputChannel.appendLine(`DevTrack: Failed to initialize Git repository. ${error.message}`);
       vscode.window.showErrorMessage(`DevTrack: Failed to initialize Git repository. ${error.message}`);

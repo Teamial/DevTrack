@@ -1,7 +1,7 @@
 // src/services/tracker.ts
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
-import minimatch from 'minimatch';
+import { minimatch } from 'minimatch';
 import { OutputChannel } from 'vscode';
 
 export interface Change {

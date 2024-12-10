@@ -34,6 +34,14 @@ export async function activate(context: vscode.ExtensionContext) {
     Exclude Patterns: ${excludePatterns.join(', ') || 'None'}
     Confirm Before Commit: ${confirmBeforeCommit}
   `);
+  
+// After retrieving configuration settings
+if (!repoName || repoName.trim() === '') {
+  vscode.window.showErrorMessage('DevTrack: Repository name is not set correctly in the configuration.');
+  outputChannel.appendLine('DevTrack: Repository name is missing or invalid.');
+  return;
+}
+outputChannel.appendLine(`DevTrack: Using repository name "${repoName}".`);
 
   // Use VS Code's Authentication API for GitHub
   const auth = vscode.authentication;
@@ -62,7 +70,7 @@ export async function activate(context: vscode.ExtensionContext) {
   try {
     // Check for existing sessions silently
     // extension.ts
-  session = await auth.getSession('github', ['repo', 'read:user'], { createIfNone: false });
+    session = await auth.getSession('github', ['repo', 'read:user'], { createIfNone: false });
     if (session) {
       outputChannel.appendLine('DevTrack: Using existing GitHub session.');
       authStatusBar.text = '$(check) DevTrack: Authenticated';

@@ -2,20 +2,16 @@
   "name": "devtrack",
   "displayName": "DevTrack",
   "description": "Track your coding journey effortlessly with DevTrack...",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "publisher": "Teanna",
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
-    "Other",
-    "Productivity"
+    "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:devtrack.startTracking",
-    "onCommand:devtrack.stopTracking",
-    "onCommand:devtrack.login"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -79,19 +75,19 @@
     "test": "vscode-test"
   },
   "dependencies": {
-    "@octokit/rest": "^19.0.7",
-    "diff": "^5.0.0",
-    "minimatch": "^5.1.0",
-    "node-schedule": "^2.1.0",
-    "simple-git": "^3.19.0"
+    "@octokit/rest": "^21.0.2",
+    "diff": "^7.0.0",
+    "minimatch": "^10.0.1",
+    "node-schedule": "^2.1.1",
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
     "@types/minimatch": "^5.1.2",
     "@types/mocha": "^10.0.10",
-    "@types/node": "20.x",
+    "@types/node": "22.x",
     "@types/vscode": "^1.95.0",
-    "@typescript-eslint/eslint-plugin": "^8.17.0",
-    "@typescript-eslint/parser": "^8.17.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "esbuild": "^0.24.0",
