@@ -11,9 +11,15 @@ export class SummaryGenerator {
 
   async generateSummary(changedFiles: Change[]): Promise<string> {
     // Example summary: List of changed files
-    const added = changedFiles.filter(change => change.type === 'added').length;
-    const modified = changedFiles.filter(change => change.type === 'changed').length;
-    const deleted = changedFiles.filter(change => change.type === 'deleted').length;
+    const added = changedFiles.filter(
+      (change) => change.type === 'added'
+    ).length;
+    const modified = changedFiles.filter(
+      (change) => change.type === 'changed'
+    ).length;
+    const deleted = changedFiles.filter(
+      (change) => change.type === 'deleted'
+    ).length;
 
     let summary = 'DevTrack: Commit Summary - ';
 
@@ -30,7 +36,9 @@ export class SummaryGenerator {
     // Remove trailing comma and space
     summary = summary.replace(/, $/, '');
 
-    this.outputChannel.appendLine(`DevTrack: Generated commit summary: "${summary}"`);
+    this.outputChannel.appendLine(
+      `DevTrack: Generated commit summary: "${summary}"`
+    );
     return summary;
   }
 }

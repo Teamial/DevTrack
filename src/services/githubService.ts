@@ -1,7 +1,7 @@
 // services/githubService.ts
-import { Octokit } from "@octokit/rest";
-import * as vscode from "vscode";
-import { OutputChannel } from "vscode";
+import { Octokit } from '@octokit/rest';
+import * as vscode from 'vscode';
+import { OutputChannel } from 'vscode';
 
 export class GitHubService {
   private octokit!: Octokit;
@@ -28,7 +28,10 @@ export class GitHubService {
    * @param description - (Optional) Description of the repository.
    * @returns The clone URL of the created repository or null if creation failed.
    */
-  async createRepo(repoName: string, description: string = "DevTrack Repository"): Promise<string | null> {
+  async createRepo(
+    repoName: string,
+    description: string = 'DevTrack Repository'
+  ): Promise<string | null> {
     try {
       const response = await this.octokit.repos.createForAuthenticatedUser({
         name: repoName,
@@ -37,8 +40,12 @@ export class GitHubService {
       });
       return response.data.clone_url;
     } catch (error: any) {
-      this.outputChannel.appendLine(`Error creating repository: ${error.message}`);
-      vscode.window.showErrorMessage(`DevTrack: Failed to create repository "${repoName}".`);
+      this.outputChannel.appendLine(
+        `Error creating repository: ${error.message}`
+      );
+      vscode.window.showErrorMessage(
+        `DevTrack: Failed to create repository "${repoName}".`
+      );
       return null;
     }
   }
@@ -52,7 +59,9 @@ export class GitHubService {
     try {
       const username = await this.getUsername();
       if (!username) {
-        vscode.window.showErrorMessage('DevTrack: Unable to retrieve GitHub username.');
+        vscode.window.showErrorMessage(
+          'DevTrack: Unable to retrieve GitHub username.'
+        );
         return false;
       }
       await this.octokit.repos.get({
@@ -64,7 +73,9 @@ export class GitHubService {
       if (error.status === 404) {
         return false;
       }
-      vscode.window.showErrorMessage(`DevTrack: Error checking repository "${repoName}".`);
+      vscode.window.showErrorMessage(
+        `DevTrack: Error checking repository "${repoName}".`
+      );
       return false;
     }
   }
@@ -78,8 +89,12 @@ export class GitHubService {
       const { data } = await this.octokit.users.getAuthenticated();
       return data.login;
     } catch (error: any) {
-      this.outputChannel.appendLine(`Error fetching username: ${error.message}`);
-      vscode.window.showErrorMessage('DevTrack: Unable to fetch GitHub username.');
+      this.outputChannel.appendLine(
+        `Error fetching username: ${error.message}`
+      );
+      vscode.window.showErrorMessage(
+        'DevTrack: Unable to fetch GitHub username.'
+      );
       return null;
     }
   }

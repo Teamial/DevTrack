@@ -1,6 +1,11 @@
 .vscode/**
 .vscode-test/**
 out/**
+out/test/**
+src/**/*.spec.ts
+.vscodeignore
+*.log
+.eslintrc.js
 node_modules/**
 src/**
 .gitignore

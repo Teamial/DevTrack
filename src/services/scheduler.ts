@@ -30,8 +30,13 @@ export class Scheduler {
     if (this.timer) {
       clearInterval(this.timer);
     }
-    this.timer = setInterval(() => this.commitChanges(), this.commitFrequency * 60 * 1000);
-    this.outputChannel.appendLine(`Scheduler: Started with a frequency of ${this.commitFrequency} minutes.`);
+    this.timer = setInterval(
+      () => this.commitChanges(),
+      this.commitFrequency * 60 * 1000
+    );
+    this.outputChannel.appendLine(
+      `Scheduler: Started with a frequency of ${this.commitFrequency} minutes.`
+    );
   }
 
   stop() {
@@ -49,10 +54,14 @@ export class Scheduler {
       return;
     }
 
-    const commitMessage = await this.summaryGenerator.generateSummary(changedFiles);
+    const commitMessage =
+      await this.summaryGenerator.generateSummary(changedFiles);
 
     const config = workspace.getConfiguration('devtrack');
-    const confirmBeforeCommit = config.get<boolean>('confirmBeforeCommit', true);
+    const confirmBeforeCommit = config.get<boolean>(
+      'confirmBeforeCommit',
+      true
+    );
 
     if (confirmBeforeCommit) {
       // Notify the user about the upcoming commit
@@ -64,7 +73,9 @@ export class Scheduler {
       );
 
       if (userResponse !== 'Proceed') {
-        this.outputChannel.appendLine('Scheduler: Commit canceled by the user.');
+        this.outputChannel.appendLine(
+          'Scheduler: Commit canceled by the user.'
+        );
         return;
       }
     }
@@ -72,7 +83,9 @@ export class Scheduler {
     try {
       await this.gitService.commitAndPush(commitMessage);
       this.tracker.clearChanges();
-      this.outputChannel.appendLine(`Scheduler: Committed changes with message "${commitMessage}".`);
+      this.outputChannel.appendLine(
+        `Scheduler: Committed changes with message "${commitMessage}".`
+      );
     } catch (error) {
       this.outputChannel.appendLine('Scheduler: Failed to commit changes.');
     }
@@ -81,6 +94,8 @@ export class Scheduler {
   updateFrequency(newFrequency: number) {
     this.commitFrequency = newFrequency;
     this.start();
-    this.outputChannel.appendLine(`Scheduler: Updated commit frequency to ${newFrequency} minutes.`);
+    this.outputChannel.appendLine(
+      `Scheduler: Updated commit frequency to ${newFrequency} minutes.`
+    );
   }
 }

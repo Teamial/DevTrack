@@ -26,18 +26,25 @@ export class Tracker extends EventEmitter {
     const config = vscode.workspace.getConfiguration('devtrack'); // Consistent key
     this.excludePatterns = config.get<string[]>('exclude') || [];
 
-    this.watcher = vscode.workspace.createFileSystemWatcher('**/*', false, false, false);
+    this.watcher = vscode.workspace.createFileSystemWatcher(
+      '**/*',
+      false,
+      false,
+      false
+    );
 
-    this.watcher.onDidChange(uri => this.handleChange(uri, 'changed'));
-    this.watcher.onDidCreate(uri => this.handleChange(uri, 'added'));
-    this.watcher.onDidDelete(uri => this.handleChange(uri, 'deleted'));
+    this.watcher.onDidChange((uri) => this.handleChange(uri, 'changed'));
+    this.watcher.onDidCreate((uri) => this.handleChange(uri, 'added'));
+    this.watcher.onDidDelete((uri) => this.handleChange(uri, 'deleted'));
 
     this.outputChannel.appendLine('DevTrack: File system watcher initialized.');
   }
 
   private handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
     const relativePath = vscode.workspace.asRelativePath(uri);
-    const isExcluded = this.excludePatterns.some(pattern => minimatch(relativePath, pattern));
+    const isExcluded = this.excludePatterns.some((pattern) =>
+      minimatch(relativePath, pattern)
+    );
     if (!isExcluded) {
       const change: Change = {
         uri,
@@ -46,7 +53,9 @@ export class Tracker extends EventEmitter {
       };
       this.changes.push(change);
       this.emit('change', change);
-      this.outputChannel.appendLine(`DevTrack: Detected ${type} in ${relativePath}.`);
+      this.outputChannel.appendLine(
+        `DevTrack: Detected ${type} in ${relativePath}.`
+      );
     }
   }
 
