@@ -32,7 +32,7 @@ async function main() {
   const ctx = await esbuild.context({
     entryPoints: ['src/extension.ts'],
     bundle: true,
-    format: 'cjs', // CommonJS format for VS Code extensions
+    format: 'cjs', 
     minify: production,
     sourcemap: !production,
     sourcesContent: false,
@@ -52,6 +52,6 @@ async function main() {
 }
 
 main().catch(e => {
-  console.error(e); // Use console.error instead of this.outputChannel.appendLine(e);
+  console.error(e); 
   process.exit(1);
 });

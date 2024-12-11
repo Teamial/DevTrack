@@ -98,6 +98,4 @@ export class GitHubService {
       return null;
     }
   }
-
-  // ... other methods
 }
