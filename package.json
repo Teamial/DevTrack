@@ -15,7 +15,10 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:devtrack.login",
+    "onCommand:devtrack.startTracking",
+    "onCommand:devtrack.stopTracking"
   ],
   "main": "./dist/extension.js",
   "icon": "studio-128x128.png",

@@ -304,9 +304,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
 
-    context.subscriptions.push(stopTracking);
-    context.subscriptions.push(startTracking);
-    context.subscriptions.push(loginCommand);
+    context.subscriptions.push(stopTracking, startTracking, loginCommand);
 
     // **Handle Configuration Changes**
     vscode.workspace.onDidChangeConfiguration(async (event) => {
