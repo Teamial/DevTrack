@@ -118,7 +118,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (loginChoice === 'Yes') {
       vscode.commands.executeCommand('devtrack.login');
     }
-    
+
     outputChannel.appendLine('DevTrack: User logged out.');
   }
 
@@ -212,14 +212,14 @@ export async function activate(context: vscode.ExtensionContext) {
       // User is not authenticated
       authStatusBar.text = '$(mark-github) DevTrack: Not Connected';
       authStatusBar.tooltip = 'DevTrack Status';
-      
+
       // Show initial setup message
       const setupChoice = await vscode.window.showInformationMessage(
         'DevTrack needs to be connected to GitHub to start tracking. Would you like to connect now?',
         'Yes',
         'No'
       );
-      
+
       if (setupChoice === 'Yes') {
         vscode.commands.executeCommand('devtrack.login');
       }
@@ -273,10 +273,10 @@ export async function activate(context: vscode.ExtensionContext) {
         try {
           // First clear any existing session by setting token to empty
           githubService.setToken('');
-          
+
           // Force a new authentication session
           session = await auth.getSession('github', ['repo', 'read:user'], {
-            forceNewSession: true
+            forceNewSession: true,
           });
 
           if (session) {
@@ -352,7 +352,9 @@ export async function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine('DevTrack: GitHub connection canceled.');
           }
         } catch (error) {
-          outputChannel.appendLine(`DevTrack: GitHub connection failed. ${error}`);
+          outputChannel.appendLine(
+            `DevTrack: GitHub connection failed. ${error}`
+          );
           vscode.window.showErrorMessage('DevTrack: GitHub connection failed.');
         }
       }
