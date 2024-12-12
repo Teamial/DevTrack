@@ -18,7 +18,8 @@
     "onStartupFinished",
     "onCommand:devtrack.login",
     "onCommand:devtrack.startTracking",
-    "onCommand:devtrack.stopTracking"
+    "onCommand:devtrack.stopTracking",
+    "onCommand:devtrack.logout"
   ],
   "main": "./dist/extension.js",
   "icon": "studio-128x128.png",
@@ -35,6 +36,10 @@
       {
         "command": "devtrack.login",
         "title": "DevTrack: Login to GitHub"
+      },
+      {
+        "command": "devtrack.logout",
+        "title": "DevTrack: Logout from GitHub"
       }
     ],
     "configuration": {

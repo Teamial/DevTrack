@@ -1,4 +1,4 @@
-// extension.ts
+/* eslint-disable no-unused-vars */
 import * as vscode from 'vscode';
 import { GitHubService } from './services/githubService';
 import { GitService } from './services/gitService';
@@ -69,25 +69,68 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.StatusBarAlignment.Right,
     101
   );
-  authStatusBar.text = '$(mark-github) DevTrack: Login';
-  authStatusBar.tooltip = 'DevTrack: Click to authenticate with GitHub';
-  authStatusBar.command = 'devtrack.login'; // Clicking this will trigger the login command
+  authStatusBar.text = '$(mark-github) DevTrack: Not Connected';
+  authStatusBar.tooltip = 'DevTrack Status';
+  // Removed the command from status bar
   authStatusBar.show();
   context.subscriptions.push(authStatusBar);
 
   // Declare scheduler outside to make it accessible in commands
   let scheduler: Scheduler | null = null;
 
+  // Define the simplified logout handler
+  async function handleLogout() {
+    const confirm = await vscode.window.showWarningMessage(
+      'Are you sure you want to logout from DevTrack?',
+      { modal: true },
+      'Yes',
+      'No'
+    );
+
+    if (confirm !== 'Yes') {
+      outputChannel.appendLine('DevTrack: Logout canceled by user.');
+      return;
+    }
+
+    // Reset GitHubService's token
+    githubService.setToken('');
+
+    // Update UI state
+    authStatusBar.text = '$(mark-github) DevTrack: Not Connected';
+    authStatusBar.tooltip = 'DevTrack Status';
+    trackingStatusBar.text = '$(circle-slash) DevTrack: Stopped';
+    trackingStatusBar.tooltip = 'DevTrack: Tracking is stopped';
+
+    // Stop the Scheduler if it's running
+    if (scheduler) {
+      scheduler.stop();
+      scheduler = null;
+      outputChannel.appendLine('DevTrack: Scheduler stopped due to logout.');
+    }
+
+    // Now prompt for new login
+    const loginChoice = await vscode.window.showInformationMessage(
+      'DevTrack: Successfully logged out. Would you like to log in with a different account?',
+      'Yes',
+      'No'
+    );
+
+    if (loginChoice === 'Yes') {
+      vscode.commands.executeCommand('devtrack.login');
+    }
+    
+    outputChannel.appendLine('DevTrack: User logged out.');
+  }
+
   try {
     // Check for existing sessions silently
-    // extension.ts
     session = await auth.getSession('github', ['repo', 'read:user'], {
       createIfNone: false,
     });
     if (session) {
       outputChannel.appendLine('DevTrack: Using existing GitHub session.');
-      authStatusBar.text = '$(check) DevTrack: Authenticated';
-      authStatusBar.tooltip = 'DevTrack: GitHub authenticated';
+      authStatusBar.text = '$(check) DevTrack: Connected';
+      authStatusBar.tooltip = 'DevTrack is connected to GitHub';
 
       // Initialize GitHub service with the session token
       githubService.setToken(session.accessToken);
@@ -167,8 +210,19 @@ export async function activate(context: vscode.ExtensionContext) {
       });
     } else {
       // User is not authenticated
-      authStatusBar.text = '$(mark-github) DevTrack: Login';
-      authStatusBar.tooltip = 'DevTrack: Click to authenticate with GitHub';
+      authStatusBar.text = '$(mark-github) DevTrack: Not Connected';
+      authStatusBar.tooltip = 'DevTrack Status';
+      
+      // Show initial setup message
+      const setupChoice = await vscode.window.showInformationMessage(
+        'DevTrack needs to be connected to GitHub to start tracking. Would you like to connect now?',
+        'Yes',
+        'No'
+      );
+      
+      if (setupChoice === 'Yes') {
+        vscode.commands.executeCommand('devtrack.login');
+      }
     }
 
     // **Register Commands**
@@ -186,7 +240,7 @@ export async function activate(context: vscode.ExtensionContext) {
           outputChannel.appendLine('DevTrack: Tracking started manually.');
         } else {
           vscode.window.showErrorMessage(
-            'DevTrack: Scheduler is not initialized.'
+            'DevTrack: Please connect to GitHub first.'
           );
           outputChannel.appendLine('DevTrack: Scheduler is not initialized.');
         }
@@ -205,7 +259,7 @@ export async function activate(context: vscode.ExtensionContext) {
           outputChannel.appendLine('DevTrack: Tracking stopped manually.');
         } else {
           vscode.window.showErrorMessage(
-            'DevTrack: Scheduler is not initialized.'
+            'DevTrack: Please connect to GitHub first.'
           );
           outputChannel.appendLine('DevTrack: Scheduler is not initialized.');
         }
@@ -217,9 +271,12 @@ export async function activate(context: vscode.ExtensionContext) {
       'devtrack.login',
       async () => {
         try {
-          // Authenticate with GitHub (prompt user)
+          // First clear any existing session by setting token to empty
+          githubService.setToken('');
+          
+          // Force a new authentication session
           session = await auth.getSession('github', ['repo', 'read:user'], {
-            createIfNone: true,
+            forceNewSession: true
           });
 
           if (session) {
@@ -227,11 +284,11 @@ export async function activate(context: vscode.ExtensionContext) {
             const newUsername = await githubService.getUsername();
             if (newUsername) {
               vscode.window.showInformationMessage(
-                `DevTrack: Logged in as ${newUsername}`
+                `DevTrack: Connected as ${newUsername}`
               );
-              outputChannel.appendLine(`DevTrack: Logged in as ${newUsername}`);
-              authStatusBar.text = '$(check) DevTrack: Authenticated';
-              authStatusBar.tooltip = 'DevTrack: GitHub authenticated';
+              outputChannel.appendLine(`DevTrack: Connected as ${newUsername}`);
+              authStatusBar.text = '$(check) DevTrack: Connected';
+              authStatusBar.tooltip = 'DevTrack is connected to GitHub';
 
               // Check if repository exists, if not create it
               const repoExists = await githubService.repoExists(repoName);
@@ -292,19 +349,30 @@ export async function activate(context: vscode.ExtensionContext) {
               );
             }
           } else {
-            vscode.window.showErrorMessage(
-              'DevTrack: GitHub authentication failed.'
-            );
-            outputChannel.appendLine('DevTrack: GitHub authentication failed.');
+            outputChannel.appendLine('DevTrack: GitHub connection canceled.');
           }
         } catch (error) {
-          outputChannel.appendLine(`DevTrack: GitHub login failed. ${error}`);
-          vscode.window.showErrorMessage('DevTrack: GitHub login failed.');
+          outputChannel.appendLine(`DevTrack: GitHub connection failed. ${error}`);
+          vscode.window.showErrorMessage('DevTrack: GitHub connection failed.');
         }
       }
     );
 
-    context.subscriptions.push(stopTracking, startTracking, loginCommand);
+    // Register Logout Command
+    const logoutCommand = vscode.commands.registerCommand(
+      'devtrack.logout',
+      async () => {
+        await handleLogout();
+      }
+    );
+
+    // Add all commands to context subscriptions
+    context.subscriptions.push(
+      stopTracking,
+      startTracking,
+      loginCommand,
+      logoutCommand
+    );
 
     // **Handle Configuration Changes**
     vscode.workspace.onDidChangeConfiguration(async (event) => {
