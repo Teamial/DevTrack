@@ -69,7 +69,7 @@ DevTrack helps developers manage their projects more efficiently by providing au
 
 ## **Contributor Expectations**
 
-We welcome contributions to improve DevTrack! Here's how you can help:
+I welcome contributions to improve DevTrack! Here's how you can help:
 
 - **Open an Issue First**: Before submitting a pull request, file an issue explaining the bug or feature.
 - **Test Your Changes**: Verify that your contributions don't break existing functionality.
@@ -85,3 +85,6 @@ We welcome contributions to improve DevTrack! Here's how you can help:
 ---
 
 ### **Start Tracking Your Coding Journey with DevTrack Today!**
+
+[**Buy Me a Coffee!**](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack)
+
