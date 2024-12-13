@@ -1,17 +1,17 @@
 // src/services/tracker.ts
-import * as vscode from 'vscode';
-import { EventEmitter } from 'events';
-import { minimatch } from 'minimatch';
-import { OutputChannel } from 'vscode';
+import * as vscode from "vscode";
+import { EventEmitter } from "events";
+import { minimatch } from "minimatch";
+import { OutputChannel } from "vscode";
 
 export interface Change {
   uri: vscode.Uri;
   timestamp: Date;
-  type: 'added' | 'changed' | 'deleted';
+  type: "added" | "changed" | "deleted";
 }
 
 export class Tracker extends EventEmitter {
-  private changes: Change[] = [];
+  private changes: Map<string, Change> = new Map();
   private watcher!: vscode.FileSystemWatcher;
   private excludePatterns: string[] = [];
   private outputChannel: OutputChannel;
@@ -23,38 +23,99 @@ export class Tracker extends EventEmitter {
   }
 
   private initializeWatcher() {
-    const config = vscode.workspace.getConfiguration('devtrack'); // Consistent key
-    this.excludePatterns = config.get<string[]>('exclude') || [];
+    const config = vscode.workspace.getConfiguration("devtrack");
+    this.excludePatterns = config.get<string[]>("exclude") || [];
 
+    // Create file system watcher
     this.watcher = vscode.workspace.createFileSystemWatcher(
-      '**/*',
-      false,
-      false,
-      false
+      "**/*",
+      false, // Don't ignore creates
+      false, // Don't ignore changes
+      false, // Don't ignore deletes
     );
 
-    this.watcher.onDidChange((uri) => this.handleChange(uri, 'changed'));
-    this.watcher.onDidCreate((uri) => this.handleChange(uri, 'added'));
-    this.watcher.onDidDelete((uri) => this.handleChange(uri, 'deleted'));
+    // Set up event handlers
+    this.watcher.onDidChange((uri) => this.handleChange(uri, "changed"));
+    this.watcher.onDidCreate((uri) => this.handleChange(uri, "added"));
+    this.watcher.onDidDelete((uri) => this.handleChange(uri, "deleted"));
 
-    this.outputChannel.appendLine('DevTrack: File system watcher initialized.');
+    this.outputChannel.appendLine("DevTrack: File system watcher initialized.");
   }
 
-  private handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
-    const relativePath = vscode.workspace.asRelativePath(uri);
-    const isExcluded = this.excludePatterns.some((pattern) =>
-      minimatch(relativePath, pattern)
-    );
-    if (!isExcluded) {
-      const change: Change = {
-        uri,
-        timestamp: new Date(),
-        type,
-      };
-      this.changes.push(change);
-      this.emit('change', change);
+  private handleChange(uri: vscode.Uri, type: "added" | "changed" | "deleted") {
+    try {
+      const relativePath = vscode.workspace.asRelativePath(uri);
+
+      // Check if file should be excluded
+      const isExcluded = this.excludePatterns.some((pattern) =>
+        minimatch(relativePath, pattern),
+      );
+
+      if (!isExcluded) {
+        // Get file extension
+        const fileExt = uri.fsPath.split(".").pop()?.toLowerCase();
+
+        // Only track source code files and specific file types
+        const trackedExtensions = [
+          "ts",
+          "js",
+          "py",
+          "java",
+          "c",
+          "cpp",
+          "h",
+          "hpp",
+          "css",
+          "scss",
+          "html",
+          "jsx",
+          "tsx",
+          "vue",
+          "php",
+          "rb",
+          "go",
+          "rs",
+          "swift",
+          "md",
+          "json",
+          "yml",
+          "yaml",
+        ];
+
+        if (fileExt && trackedExtensions.includes(fileExt)) {
+          const key = uri.fsPath;
+
+          // Check if this is a meaningful change
+          const existingChange = this.changes.get(key);
+          if (existingChange) {
+            // If the file was previously deleted and now added, keep as added
+            if (existingChange.type === "deleted" && type === "added") {
+              type = "added";
+            }
+            // If the file was previously added and modified, keep as added
+            else if (existingChange.type === "added" && type === "changed") {
+              type = "added";
+            }
+          }
+
+          // Update or add the change
+          const change: Change = {
+            uri,
+            timestamp: new Date(),
+            type,
+          };
+
+          this.changes.set(key, change);
+          this.emit("change", change);
+
+          this.outputChannel.appendLine(
+            `DevTrack: Detected ${type} in ${relativePath}`,
+          );
+        }
+      }
+    } catch (error) {
       this.outputChannel.appendLine(
-        `DevTrack: Detected ${type} in ${relativePath}.`
+        `DevTrack: Error handling file change: ${error}`,
       );
     }
   }
@@ -63,15 +124,15 @@ export class Tracker extends EventEmitter {
    * Returns the list of changed files.
    */
   getChangedFiles(): Change[] {
-    return [...this.changes];
+    return Array.from(this.changes.values());
   }
 
   /**
    * Clears the tracked changes.
    */
   clearChanges(): void {
-    this.changes = [];
-    this.outputChannel.appendLine('DevTrack: Cleared tracked changes.');
+    this.changes.clear();
+    this.outputChannel.appendLine("DevTrack: Cleared tracked changes.");
   }
 
   /**
@@ -80,7 +141,7 @@ export class Tracker extends EventEmitter {
    */
   updateExcludePatterns(newPatterns: string[]) {
     this.excludePatterns = newPatterns;
-    this.outputChannel.appendLine('DevTrack: Updated exclude patterns.');
+    this.outputChannel.appendLine("DevTrack: Updated exclude patterns.");
   }
 
   /**
@@ -88,6 +149,6 @@ export class Tracker extends EventEmitter {
    */
   dispose() {
     this.watcher.dispose();
-    this.outputChannel.appendLine('DevTrack: Disposed file system watcher.');
+    this.outputChannel.appendLine("DevTrack: Disposed file system watcher.");
   }
 }

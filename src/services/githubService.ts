@@ -1,11 +1,11 @@
 // services/githubService.ts
-import { Octokit } from '@octokit/rest';
-import * as vscode from 'vscode';
-import { OutputChannel } from 'vscode';
+import { Octokit } from "@octokit/rest";
+import * as vscode from "vscode";
+import { OutputChannel } from "vscode";
 
 export class GitHubService {
   private octokit!: Octokit;
-  private token: string = '';
+  private token: string = "";
   private outputChannel: OutputChannel;
 
   constructor(outputChannel: OutputChannel) {
@@ -30,7 +30,7 @@ export class GitHubService {
    */
   async createRepo(
     repoName: string,
-    description: string = 'DevTrack Repository'
+    description: string = "DevTrack Repository",
   ): Promise<string | null> {
     try {
       const response = await this.octokit.repos.createForAuthenticatedUser({
@@ -41,10 +41,10 @@ export class GitHubService {
       return response.data.clone_url;
     } catch (error: any) {
       this.outputChannel.appendLine(
-        `Error creating repository: ${error.message}`
+        `Error creating repository: ${error.message}`,
       );
       vscode.window.showErrorMessage(
-        `DevTrack: Failed to create repository "${repoName}".`
+        `DevTrack: Failed to create repository "${repoName}".`,
       );
       return null;
     }
@@ -60,7 +60,7 @@ export class GitHubService {
       const username = await this.getUsername();
       if (!username) {
         vscode.window.showErrorMessage(
-          'DevTrack: Unable to retrieve GitHub username.'
+          "DevTrack: Unable to retrieve GitHub username.",
         );
         return false;
       }
@@ -74,7 +74,7 @@ export class GitHubService {
         return false;
       }
       vscode.window.showErrorMessage(
-        `DevTrack: Error checking repository "${repoName}".`
+        `DevTrack: Error checking repository "${repoName}".`,
       );
       return false;
     }
@@ -90,10 +90,10 @@ export class GitHubService {
       return data.login;
     } catch (error: any) {
       this.outputChannel.appendLine(
-        `Error fetching username: ${error.message}`
+        `Error fetching username: ${error.message}`,
       );
       vscode.window.showErrorMessage(
-        'DevTrack: Unable to fetch GitHub username.'
+        "DevTrack: Unable to fetch GitHub username.",
       );
       return null;
     }

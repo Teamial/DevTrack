@@ -1,8 +1,8 @@
 // services/scheduler.ts
-import { Tracker, Change } from './tracker';
-import { SummaryGenerator } from './summaryGenerator';
-import { GitService } from './gitService';
-import { OutputChannel, window, workspace } from 'vscode';
+import { Tracker, Change } from "./tracker";
+import { SummaryGenerator } from "./summaryGenerator";
+import { GitService } from "./gitService";
+import { OutputChannel, window, workspace } from "vscode";
 
 export class Scheduler {
   private commitFrequency: number; // in minutes
@@ -17,7 +17,7 @@ export class Scheduler {
     tracker: Tracker,
     summaryGenerator: SummaryGenerator,
     gitService: GitService,
-    outputChannel: OutputChannel
+    outputChannel: OutputChannel,
   ) {
     this.commitFrequency = commitFrequency;
     this.tracker = tracker;
@@ -32,10 +32,10 @@ export class Scheduler {
     }
     this.timer = setInterval(
       () => this.commitChanges(),
-      this.commitFrequency * 60 * 1000
+      this.commitFrequency * 60 * 1000,
     );
     this.outputChannel.appendLine(
-      `Scheduler: Started with a frequency of ${this.commitFrequency} minutes.`
+      `Scheduler: Started with a frequency of ${this.commitFrequency} minutes.`,
     );
   }
 
@@ -43,24 +43,24 @@ export class Scheduler {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
-      this.outputChannel.appendLine('Scheduler: Stopped.');
+      this.outputChannel.appendLine("Scheduler: Stopped.");
     }
   }
 
   async commitChanges() {
     const changedFiles = this.tracker.getChangedFiles();
     if (changedFiles.length === 0) {
-      this.outputChannel.appendLine('Scheduler: No changes detected.');
+      this.outputChannel.appendLine("Scheduler: No changes detected.");
       return;
     }
 
     const commitMessage =
       await this.summaryGenerator.generateSummary(changedFiles);
 
-    const config = workspace.getConfiguration('devtrack');
+    const config = workspace.getConfiguration("devtrack");
     const confirmBeforeCommit = config.get<boolean>(
-      'confirmBeforeCommit',
-      true
+      "confirmBeforeCommit",
+      true,
     );
 
     if (confirmBeforeCommit) {
@@ -68,13 +68,13 @@ export class Scheduler {
       const userResponse = await window.showInformationMessage(
         `DevTrack: A commit will be made with the following message:\n"${commitMessage}"`,
         { modal: true },
-        'Proceed',
-        'Cancel'
+        "Proceed",
+        "Cancel",
       );
 
-      if (userResponse !== 'Proceed') {
+      if (userResponse !== "Proceed") {
         this.outputChannel.appendLine(
-          'Scheduler: Commit canceled by the user.'
+          "Scheduler: Commit canceled by the user.",
         );
         return;
       }
@@ -84,10 +84,10 @@ export class Scheduler {
       await this.gitService.commitAndPush(commitMessage);
       this.tracker.clearChanges();
       this.outputChannel.appendLine(
-        `Scheduler: Committed changes with message "${commitMessage}".`
+        `Scheduler: Committed changes with message "${commitMessage}".`,
       );
     } catch (error) {
-      this.outputChannel.appendLine('Scheduler: Failed to commit changes.');
+      this.outputChannel.appendLine("Scheduler: Failed to commit changes.");
     }
   }
 
@@ -95,7 +95,7 @@ export class Scheduler {
     this.commitFrequency = newFrequency;
     this.start();
     this.outputChannel.appendLine(
-      `Scheduler: Updated commit frequency to ${newFrequency} minutes.`
+      `Scheduler: Updated commit frequency to ${newFrequency} minutes.`,
     );
   }
 }
