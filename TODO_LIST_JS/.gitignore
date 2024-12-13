@@ -1,7 +1,0 @@
-# Good
-/node_modules
-/dist
-
-# Avoid ignoring important assets
-#!/*.html
-#!/images/

@@ -1,0 +1,116 @@
+{
+  "name": "devtrack",
+  "displayName": "DevTrack",
+  "description": "Track your coding journey effortlessly with DevTrack",
+  "version": "1.0.1",
+  "publisher": "TeannaCole",
+  "repository": {
+    "type": "GitHub",
+    "url": "https://github.com/Teamial/DevTrack/tree/master"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:devtrack.login",
+    "onCommand:devtrack.startTracking",
+    "onCommand:devtrack.stopTracking",
+    "onCommand:devtrack.logout"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "studio-128x128.png",
+  "contributes": {
+    "commands": [
+      {
+        "command": "devtrack.startTracking",
+        "title": "DevTrack: Start Tracking"
+      },
+      {
+        "command": "devtrack.stopTracking",
+        "title": "DevTrack: Stop Tracking"
+      },
+      {
+        "command": "devtrack.login",
+        "title": "DevTrack: Login to GitHub"
+      },
+      {
+        "command": "devtrack.logout",
+        "title": "DevTrack: Logout from GitHub"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "DevTrack Configuration",
+      "properties": {
+        "devtrack.repoName": {
+          "type": "string",
+          "default": "code-tracking",
+          "description": "Name of the GitHub repository to store tracking logs."
+        },
+        "devtrack.commitFrequency": {
+          "type": "number",
+          "default": 30,
+          "description": "How often (in minutes) to commit your coding history."
+        },
+        "devtrack.confirmBeforeCommit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a confirmation dialog before each automatic commit."
+        },
+        "devtrack.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of glob patterns to exclude from tracking."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "build": "npm run compile",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.2",
+    "diff": "^7.0.0",
+    "minimatch": "^10.0.1",
+    "node-schedule": "^2.1.1",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/minimatch": "^5.1.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.95.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.16.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.1",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vsce": "^2.15.0"
+  }
+}
