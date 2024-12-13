@@ -1,7 +1,7 @@
 // src/services/summaryGenerator.ts
-import * as vscode from "vscode";
-import { Change } from "./tracker";
-import { ProjectContext } from "./projectContext";
+import * as vscode from 'vscode';
+import { Change } from './tracker';
+import { ProjectContext } from './projectContext';
 
 export class SummaryGenerator {
   private outputChannel: vscode.OutputChannel;
@@ -9,7 +9,7 @@ export class SummaryGenerator {
 
   constructor(
     outputChannel: vscode.OutputChannel,
-    extensionContext: vscode.ExtensionContext,
+    extensionContext: vscode.ExtensionContext
   ) {
     this.outputChannel = outputChannel;
     this.projectContext = new ProjectContext(outputChannel, extensionContext);
@@ -30,32 +30,32 @@ export class SummaryGenerator {
       await this.projectContext.addCommit(summary, changedFiles);
 
       this.outputChannel.appendLine(
-        `DevTrack: Generated commit summary: "${summary}"`,
+        `DevTrack: Generated commit summary: "${summary}"`
       );
 
       return summary;
     } catch (error) {
       this.outputChannel.appendLine(
-        `DevTrack: Error generating summary: ${error}`,
+        `DevTrack: Error generating summary: ${error}`
       );
       // Return a basic summary in case of error
-      return "DevTrack: Updated files";
+      return 'DevTrack: Updated files';
     }
   }
 
   private calculateChangeStats(changes: Change[]) {
     return {
-      added: changes.filter((change) => change.type === "added").length,
-      modified: changes.filter((change) => change.type === "changed").length,
-      deleted: changes.filter((change) => change.type === "deleted").length,
+      added: changes.filter((change) => change.type === 'added').length,
+      modified: changes.filter((change) => change.type === 'changed').length,
+      deleted: changes.filter((change) => change.type === 'deleted').length,
     };
   }
 
   private buildSummaryString(
     context: string,
-    stats: { added: number; modified: number; deleted: number },
+    stats: { added: number; modified: number; deleted: number }
   ): string {
-    let summary = "DevTrack: ";
+    let summary = 'DevTrack: ';
 
     // Add context if available
     if (context) {
@@ -77,9 +77,9 @@ export class SummaryGenerator {
     // Add change details if there are any
     if (changeDetails.length > 0) {
       if (context) {
-        summary += "| "; // Add separator if we have context
+        summary += '| '; // Add separator if we have context
       }
-      summary += changeDetails.join(", ");
+      summary += changeDetails.join(', ');
     }
 
     return summary;
