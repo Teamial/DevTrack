@@ -1,7 +1,7 @@
 // src/services/projectContext.ts
-import * as vscode from "vscode";
-import { Change } from "./tracker";
-import * as path from "path";
+import * as vscode from 'vscode';
+import { Change } from './tracker';
+import * as path from 'path';
 
 interface CommitHistory {
   timestamp: number;
@@ -31,13 +31,13 @@ export class ProjectContext {
   private projectStats: ProjectStats = {
     mostChangedFiles: new Map(),
     recentMilestones: [],
-    activeBranch: "",
+    activeBranch: '',
     lastCommitTime: new Date(),
   };
 
   constructor(
     outputChannel: vscode.OutputChannel,
-    extensionContext: vscode.ExtensionContext,
+    extensionContext: vscode.ExtensionContext
   ) {
     this.outputChannel = outputChannel;
     this.extensionContext = extensionContext;
@@ -48,17 +48,17 @@ export class ProjectContext {
     try {
       await this.loadGitHistory();
       await this.updateProjectStats();
-      this.outputChannel.appendLine("DevTrack: Loaded project context");
+      this.outputChannel.appendLine('DevTrack: Loaded project context');
     } catch (error) {
       this.outputChannel.appendLine(
-        `DevTrack: Error loading context: ${error}`,
+        `DevTrack: Error loading context: ${error}`
       );
     }
   }
 
   private async loadGitHistory() {
     try {
-      const gitExt = vscode.extensions.getExtension("vscode.git");
+      const gitExt = vscode.extensions.getExtension('vscode.git');
       if (gitExt) {
         const git = gitExt.exports.getAPI(1);
         if (git.repositories.length > 0) {
@@ -70,7 +70,7 @@ export class ProjectContext {
             summary: commit.message,
             files:
               commit.files?.map((f) =>
-                vscode.workspace.asRelativePath(f.uri),
+                vscode.workspace.asRelativePath(f.uri)
               ) || [],
             hash: commit.hash,
           }));
@@ -78,7 +78,7 @@ export class ProjectContext {
       }
     } catch (error) {
       this.outputChannel.appendLine(
-        `DevTrack: Error loading git history: ${error}`,
+        `DevTrack: Error loading git history: ${error}`
       );
     }
   }
@@ -86,13 +86,13 @@ export class ProjectContext {
   private shouldTrackFile(filePath: string): boolean {
     // Ignore specific patterns
     const ignorePatterns = [
-      "node_modules",
-      ".git",
-      ".DS_Store",
-      "dist",
-      "out",
-      "build",
-      ".vscode",
+      'node_modules',
+      '.git',
+      '.DS_Store',
+      'dist',
+      'out',
+      'build',
+      '.vscode',
     ];
 
     // Get file extension
@@ -100,29 +100,29 @@ export class ProjectContext {
 
     // Track only specific file types
     const trackedExtensions = [
-      "ts",
-      "js",
-      "py",
-      "java",
-      "c",
-      "cpp",
-      "h",
-      "hpp",
-      "css",
-      "scss",
-      "html",
-      "jsx",
-      "tsx",
-      "vue",
-      "php",
-      "rb",
-      "go",
-      "rs",
-      "swift",
-      "md",
-      "json",
-      "yml",
-      "yaml",
+      'ts',
+      'js',
+      'py',
+      'java',
+      'c',
+      'cpp',
+      'h',
+      'hpp',
+      'css',
+      'scss',
+      'html',
+      'jsx',
+      'tsx',
+      'vue',
+      'php',
+      'rb',
+      'go',
+      'rs',
+      'swift',
+      'md',
+      'json',
+      'yml',
+      'yaml',
     ];
 
     return (
@@ -138,6 +138,7 @@ export class ProjectContext {
         .map((change) => vscode.workspace.asRelativePath(change.uri))
         .filter((filePath) => this.shouldTrackFile(filePath));
 
+      // eslint-disable-next-line no-unused-vars
       const commit: CommitHistory = {
         timestamp: Date.now(),
         summary: summary,
@@ -167,22 +168,22 @@ export class ProjectContext {
 
       // Sort by frequency
       const sortedFiles = new Map(
-        [...stats.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10),
+        [...stats.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
       );
 
       // Get git branch
-      let currentBranch = "";
+      let currentBranch = '';
       try {
-        const gitExt = vscode.extensions.getExtension("vscode.git");
+        const gitExt = vscode.extensions.getExtension('vscode.git');
         if (gitExt) {
           const git = gitExt.exports.getAPI(1);
           if (git.repositories.length > 0) {
-            currentBranch = git.repositories[0].state.HEAD?.name || "";
+            currentBranch = git.repositories[0].state.HEAD?.name || '';
           }
         }
       } catch (error) {
         this.outputChannel.appendLine(
-          `DevTrack: Error getting git branch: ${error}`,
+          `DevTrack: Error getting git branch: ${error}`
         );
       }
 
@@ -191,18 +192,18 @@ export class ProjectContext {
         recentMilestones: [],
         activeBranch: currentBranch,
         lastCommitTime: new Date(
-          this.commitHistory[0]?.timestamp || Date.now(),
+          this.commitHistory[0]?.timestamp || Date.now()
         ),
       };
     } catch (error) {
       this.outputChannel.appendLine(
-        `DevTrack: Error updating project stats: ${error}`,
+        `DevTrack: Error updating project stats: ${error}`
       );
     }
   }
 
   public getContextForSummary(currentChanges: Change[]): string {
-    let context = "";
+    let context = '';
 
     try {
       // Get current changed files
@@ -211,7 +212,7 @@ export class ProjectContext {
         .filter((file, index, self) => self.indexOf(file) === index);
 
       if (currentFiles.length > 0) {
-        context += `Files: ${currentFiles.join(", ")}. `;
+        context += `Files: ${currentFiles.join(', ')}. `;
       }
 
       // Add branch context
@@ -220,7 +221,7 @@ export class ProjectContext {
       }
     } catch (error) {
       this.outputChannel.appendLine(
-        `DevTrack: Error generating context summary: ${error}`,
+        `DevTrack: Error generating context summary: ${error}`
       );
     }
 
