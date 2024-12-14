@@ -69,18 +69,11 @@ DevTrack helps developers manage their projects more efficiently by providing au
 
 ## **Contributor Expectations**
 
-I welcome contributions to improve DevTrack! Here's how you can help:
+Contributions to improve DevTrack are always welcome! Here's how you can help:
 
 - **Open an Issue First**: Before submitting a pull request, file an issue explaining the bug or feature.
 - **Test Your Changes**: Verify that your contributions don't break existing functionality.
 - **Squash Commits**: Consolidate multiple commits into a single, meaningful one before opening a pull request.
-
----
-
-## **Known Issues**
-
-- **README Commit Issue**: DevTrack may accidentally commit `README.md` files from your workspace. Use the exclude patterns in the settings to prevent this.
-- **Authentication Timeout**: Long sessions may require re-authentication with GitHub.
 
 ---
 
