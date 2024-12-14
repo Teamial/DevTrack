@@ -18,7 +18,7 @@ DevTrack helps developers manage their projects more efficiently by providing au
    - Open Visual Studio Code.
    - Go to the Extensions Marketplace (`Ctrl+Shift+X` or `Cmd+Shift+X`).
    - Search for "DevTrack" and click "Install."
-(**Alternatively**: Install DevTrack from VS Code Marketplace [here](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack))
+(**Alternatively**: Install [DevTrack](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack) from VS Code Marketplace)
 
 2. **Log in to GitHub**:
    - Click the GitHub icon in the VS Code status bar.
