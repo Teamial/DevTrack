@@ -238,16 +238,34 @@ ${defaultIgnores
     const config = vscode.workspace.getConfiguration('devtrack');
     const excludePatterns = config.get<string[]>('exclude') || [];
 
+    // Add common system files to exclude patterns
+    const systemExcludes = [
+      '.DS_Store',
+      'Thumbs.db',
+      'desktop.ini',
+      '*.swp',
+      '.Spotlight-V100',
+      '.Trashes',
+    ];
+
+    const allExcludes = [...excludePatterns, ...systemExcludes];
+
     return status.files
       .map((file) => file.path)
       .filter((file) => {
         const isDevTrackFile =
           file.startsWith('.devtrack/') || file === '.gitignore';
-        const isExcluded = excludePatterns.some((pattern) =>
-          minimatch(file, pattern)
+        const isExcluded = allExcludes.some((pattern) =>
+          minimatch(file, pattern, { dot: true })
         );
         return isDevTrackFile || !isExcluded;
       });
+  }
+  catch(error: any) {
+    this.outputChannel.appendLine(
+      `DevTrack: Error getting tracked files: ${error.message}`
+    );
+    return [];
   }
 
   async commitAndPush(message: string): Promise<void> {
