@@ -38,20 +38,7 @@ async function main() {
     target: 'node14',
     outfile: 'dist/extension.js',
     external: [
-      'vscode',
-      'child_process',
-      'fs',
-      'path',
-      'events',
-      'util',
-      'os',
-      'http',
-      'https',
-      'net',
-      'tls',
-      'crypto',
-      'stream',
-      'zlib'
+      'vscode'  // Only keep vscode as external
     ],
     define: {
       'process.env.NODE_ENV': production ? '"production"' : '"development"'
@@ -64,7 +51,10 @@ async function main() {
   if (watch) {
     await ctx.watch();
   } else {
-    await ctx.rebuild();
+    const result = await ctx.rebuild();
+    if (result.errors.length > 0) {
+      console.error('Build errors:', result.errors);
+    }
     await ctx.dispose();
   }
 }
