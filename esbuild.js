@@ -1,4 +1,3 @@
-// esbuild.js
 const esbuild = require('esbuild');
 
 const production = process.argv.includes('--production');
@@ -39,8 +38,24 @@ async function main() {
     target: 'node14',
     outfile: 'dist/extension.js',
     external: [
-      'vscode'  // Only keep vscode as external
+      'vscode',
+      'child_process',
+      'fs',
+      'path',
+      'events',
+      'util',
+      'os',
+      'http',
+      'https',
+      'net',
+      'tls',
+      'crypto',
+      'stream',
+      'zlib'
     ],
+    define: {
+      'process.env.NODE_ENV': production ? '"production"' : '"development"'
+    },
     logLevel: 'silent',
     plugins: [esbuildProblemMatcherPlugin],
     treeShaking: true,

@@ -1,6 +1,5 @@
-/* eslint-disable no-unused-vars */
 /* eslint-disable no-undef */
-// src/services/gitService.ts
+/* eslint-disable no-unused-vars */
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -14,7 +13,8 @@ export class GitService extends EventEmitter {
   private repoPath: string;
   private outputChannel: OutputChannel;
   private trackingDirectory: string;
-  private initialCommitTimestamp: number;
+  private initialTimestampFile: string;
+  private isCommitting: boolean = false;
 
   constructor(outputChannel: OutputChannel) {
     super();
@@ -22,34 +22,55 @@ export class GitService extends EventEmitter {
     const workspaceFolders = vscode.workspace.workspaceFolders;
 
     if (!workspaceFolders || workspaceFolders.length === 0) {
+      vscode.window.showErrorMessage(
+        'DevTrack: No workspace folder is open. Please open a folder to start tracking.'
+      );
       throw new Error('No workspace folder open.');
     }
 
     const workspaceFolder = workspaceFolders[0].uri.fsPath;
     this.repoPath = workspaceFolder;
     this.trackingDirectory = path.join(this.repoPath, '.devtrack');
-    this.initialCommitTimestamp = Date.now();
+    this.initialTimestampFile = path.join(
+      this.trackingDirectory,
+      'initial_timestamp'
+    );
 
     if (!path.isAbsolute(this.repoPath)) {
       throw new Error('Invalid repository path.');
     }
 
-    this.git = simpleGit(this.repoPath);
+    this.git = simpleGit({
+      baseDir: this.repoPath,
+      binary: 'git',
+      maxConcurrentProcesses: 1,
+      trimmed: false,
+    });
   }
 
   async initializeRepo(remoteUrl: string): Promise<void> {
     try {
-      // Check if repo exists
+      // Check if git is installed
+      try {
+        await this.git.raw(['--version']);
+      } catch (error) {
+        throw new Error('Git is not installed or not accessible');
+      }
+
       const isRepo = await this.git.checkIsRepo();
 
       if (!isRepo) {
-        // Initialize new repository
         await this.git.init();
+        await this.git.addConfig('core.autocrlf', 'false');
+        await this.git.addConfig('user.name', 'DevTrack');
+        await this.git.addConfig(
+          'user.email',
+          'devtrack@users.noreply.github.com'
+        );
         this.outputChannel.appendLine(
           'DevTrack: Initialized new Git repository.'
         );
       } else {
-        // Check if it's already a DevTrack repo
         const isDevTrackRepo = await this.isDevTrackRepo();
         if (isDevTrackRepo) {
           this.outputChannel.appendLine(
@@ -59,7 +80,6 @@ export class GitService extends EventEmitter {
         }
       }
 
-      // Set up initial configuration
       await this.setupInitialConfig(remoteUrl);
     } catch (error: any) {
       this.outputChannel.appendLine(
@@ -78,60 +98,56 @@ export class GitService extends EventEmitter {
       return false;
     }
   }
-  private async configureRemote(remoteUrl: string): Promise<void> {
-    try {
-      const remotes = await this.git.getRemotes(true);
-      const originRemote = remotes.find((remote) => remote.name === 'origin');
-
-      if (originRemote) {
-        if (originRemote.refs.fetch !== remoteUrl) {
-          await this.git.removeRemote('origin');
-          this.outputChannel.appendLine(
-            'DevTrack: Removed existing remote origin.'
-          );
-          await this.git.addRemote('origin', remoteUrl);
-          this.outputChannel.appendLine(
-            `DevTrack: Added remote origin ${remoteUrl}.`
-          );
-        } else {
-          this.outputChannel.appendLine(
-            'DevTrack: Remote origin is already set correctly.'
-          );
-        }
-      } else {
-        await this.git.addRemote('origin', remoteUrl);
-        this.outputChannel.appendLine(
-          `DevTrack: Added remote origin ${remoteUrl}.`
-        );
-      }
-    } catch (error: any) {
-      throw new Error(`Failed to configure remote: ${error.message}`);
-    }
-  }
-
-  private async setupMainBranch(): Promise<void> {
-    try {
-      const branchSummary = await this.git.branchLocal();
-      if (!branchSummary.current || branchSummary.current !== 'main') {
-        await this.git.checkoutLocalBranch('main');
-        this.outputChannel.appendLine(
-          'DevTrack: Created and switched to branch "main".'
-        );
-      } else {
-        this.outputChannel.appendLine('DevTrack: Already on main branch.');
-      }
-    } catch (error: any) {
-      throw new Error(`Failed to setup main branch: ${error.message}`);
-    }
-  }
 
   private async setupInitialConfig(remoteUrl: string): Promise<void> {
     try {
-      // Create .gitignore if it doesn't exist
-      await this.setupGitignore();
+      // Create .devtrack directory and store initial timestamp
+      await vscode.workspace.fs.createDirectory(
+        vscode.Uri.file(this.trackingDirectory)
+      );
+      const timestamp = Date.now();
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.file(this.initialTimestampFile),
+        Buffer.from(timestamp.toString(), 'utf8')
+      );
 
-      // Create DevTrack directory and config
-      await this.setupDevTrackDirectory();
+      // Create README in .devtrack
+      const readmePath = path.join(this.trackingDirectory, 'README.md');
+      const readmeContent = `# DevTrack Activity Log
+
+This directory is managed by DevTrack to track your coding activity.
+Only files modified after ${new Date(timestamp).toLocaleString()} will be tracked.
+
+## Configuration
+- Commit Frequency: ${vscode.workspace.getConfiguration('devtrack').get('commitFrequency')} minutes
+- Excluded Patterns: ${JSON.stringify(vscode.workspace.getConfiguration('devtrack').get('exclude'))}
+`;
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.file(readmePath),
+        Buffer.from(readmeContent, 'utf8')
+      );
+
+      // Create .gitignore if it doesn't exist
+      const gitignorePath = path.join(this.repoPath, '.gitignore');
+      if (!fs.existsSync(gitignorePath)) {
+        const defaultIgnores = [
+          'node_modules/',
+          'dist/',
+          '.DS_Store',
+          'build/',
+          'coverage/',
+          '.env',
+          '*.log',
+          '.vscode/',
+          'temp/',
+          '*.tmp',
+        ].join('\n');
+
+        await vscode.workspace.fs.writeFile(
+          vscode.Uri.file(gitignorePath),
+          Buffer.from(defaultIgnores, 'utf8')
+        );
+      }
 
       // Configure remote
       await this.configureRemote(remoteUrl);
@@ -139,10 +155,9 @@ export class GitService extends EventEmitter {
       // Set up main branch
       await this.setupMainBranch();
 
-      // Create initial commit with only DevTrack files
-      await this.createInitialCommit();
-
-      // Push initial setup
+      // Initial commit with only DevTrack files
+      await this.git.add(['.devtrack/**/*', '.gitignore']);
+      await this.git.commit('DevTrack: Initialize repository tracking');
       await this.git.push(['-u', 'origin', 'main']);
 
       this.outputChannel.appendLine(
@@ -155,106 +170,82 @@ export class GitService extends EventEmitter {
     }
   }
 
-  private async setupGitignore(): Promise<void> {
-    const gitignorePath = path.join(this.repoPath, '.gitignore');
-    const defaultIgnores = [
-      'node_modules/',
-      'dist/',
-      '.DS_Store',
-      'build/',
-      'coverage/',
-      '.env',
-      '*.log',
-      '.vscode/',
-      'temp/',
-      '*.tmp',
-    ].join('\n');
+  private async configureRemote(remoteUrl: string): Promise<void> {
+    const remotes = await this.git.getRemotes(true);
+    const originRemote = remotes.find((remote) => remote.name === 'origin');
 
-    await vscode.workspace.fs.writeFile(
-      vscode.Uri.file(gitignorePath),
-      Uint8Array.from(Buffer.from(defaultIgnores, 'utf8'))
-    );
+    if (originRemote) {
+      if (originRemote.refs.fetch !== remoteUrl) {
+        await this.git.removeRemote('origin');
+        await this.git.addRemote('origin', remoteUrl);
+      }
+    } else {
+      await this.git.addRemote('origin', remoteUrl);
+    }
   }
 
-  private async setupDevTrackDirectory(): Promise<void> {
-    await vscode.workspace.fs.createDirectory(
-      vscode.Uri.file(this.trackingDirectory)
-    );
-
-    const readmePath = path.join(this.trackingDirectory, 'README.md');
-    const readmeContent = `# DevTrack Activity Log
-
-This directory is managed by DevTrack to track your coding activity.
-Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString()} will be tracked.
-
-## Configuration
-- Commit Frequency: ${vscode.workspace.getConfiguration('devtrack').get('commitFrequency')} minutes
-- Excluded Patterns: ${JSON.stringify(vscode.workspace.getConfiguration('devtrack').get('exclude'))}
-`;
-
-    await vscode.workspace.fs.writeFile(
-      vscode.Uri.file(readmePath),
-      Buffer.from(readmeContent, 'utf8')
-    );
-  }
-
-  private async createInitialCommit(): Promise<void> {
-    try {
-      // Only stage DevTrack-specific files
-      await this.git.add(['.gitignore', '.devtrack/README.md']);
-
-      const commitMessage = 'DevTrack: Initialize repository tracking';
-      await this.git.commit(commitMessage);
-
-      this.outputChannel.appendLine(
-        'DevTrack: Created initial configuration commit.'
-      );
-    } catch (error: any) {
-      throw new Error(`Failed to create initial commit: ${error.message}`);
+  private async setupMainBranch(): Promise<void> {
+    const branchSummary = await this.git.branchLocal();
+    if (!branchSummary.current || branchSummary.current !== 'main') {
+      await this.git.checkoutLocalBranch('main');
     }
   }
 
   async commitAndPush(message: string): Promise<void> {
+    if (this.isCommitting) {
+      this.outputChannel.appendLine('DevTrack: Another commit is in progress');
+      return;
+    }
+
+    this.isCommitting = true;
+    let currentBranch: string | undefined;
+
     try {
+      // Get modified files
       const trackedFiles = await this.getModifiedFiles();
 
-      if (trackedFiles.length === 0) {
-        this.outputChannel.appendLine(
-          'DevTrack: No tracked changes to commit.'
-        );
+      if (!trackedFiles.length) {
+        this.outputChannel.appendLine('DevTrack: No files to commit');
         return;
       }
 
-      // Ensure we're on main branch
-      await this.git.checkout('main');
+      // Store current branch
+      const branchInfo = await this.git.branch();
+      currentBranch = branchInfo.current;
+
+      // Ensure we're on main
+      if (currentBranch !== 'main') {
+        await this.git.checkout('main');
+      }
 
       // Pull latest changes
       try {
         await this.git.pull('origin', 'main', { '--rebase': 'true' });
       } catch (pullError) {
-        this.outputChannel.appendLine('DevTrack: No remote changes to pull.');
+        this.outputChannel.appendLine(
+          'DevTrack: Pull failed (continuing anyway)'
+        );
       }
 
-      // Stage and commit only tracked files that exist in workspace
-      let stagedFiles = 0;
+      // Stage files
       for (const file of trackedFiles) {
         try {
           await this.git.add(file);
-          stagedFiles++;
         } catch (error) {
-          this.outputChannel.appendLine(
-            `DevTrack: Could not stage file ${file}: ${error}`
-          );
+          this.outputChannel.appendLine(`DevTrack: Failed to stage ${file}`);
         }
       }
 
-      if (stagedFiles === 0) {
+      // Verify staged files
+      const status = await this.git.status();
+      if (status.staged.length === 0) {
         this.outputChannel.appendLine(
-          'DevTrack: No files were staged for commit.'
+          'DevTrack: No files were staged successfully'
         );
         return;
       }
 
+      // Commit and push
       await this.git.commit(message);
       await this.git.push('origin', 'main');
 
@@ -264,11 +255,99 @@ Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString
       );
     } catch (error: any) {
       this.outputChannel.appendLine(
-        `DevTrack: Git commit failed. ${error.message}`
+        `DevTrack: Git operation failed: ${error.message}`
       );
-      vscode.window.showErrorMessage(
-        `DevTrack: Git commit failed. ${error.message}`
+      throw error;
+    } finally {
+      // Restore original branch if needed
+      if (currentBranch && currentBranch !== 'main') {
+        try {
+          await this.git.checkout(currentBranch);
+        } catch (error) {
+          this.outputChannel.appendLine(
+            `DevTrack: Failed to restore original branch: ${error}`
+          );
+        }
+      }
+      this.isCommitting = false;
+    }
+  }
+
+  private async getInitialTimestamp(): Promise<number> {
+    try {
+      const timestampBuffer = await vscode.workspace.fs.readFile(
+        vscode.Uri.file(this.initialTimestampFile)
       );
+      return parseInt(timestampBuffer.toString(), 10);
+    } catch {
+      return Date.now(); // Fallback to current time if file doesn't exist
+    }
+  }
+
+  private async getModifiedFiles(): Promise<string[]> {
+    try {
+      const status = await this.git.status();
+      const initialTimestamp = await this.getInitialTimestamp();
+      this.outputChannel.appendLine(
+        `DevTrack: Initial timestamp: ${new Date(initialTimestamp).toLocaleString()}`
+      );
+
+      const config = vscode.workspace.getConfiguration('devtrack');
+      const excludePatterns = config.get<string[]>('exclude') || [];
+
+      const trackedFiles = await Promise.all(
+        status.files
+          .filter((file) => {
+            // Skip DevTrack files
+            if (
+              file.path.startsWith('.devtrack/') ||
+              file.path === '.gitignore'
+            ) {
+              return false;
+            }
+
+            // Skip excluded patterns
+            if (
+              excludePatterns.some((pattern) => minimatch(file.path, pattern))
+            ) {
+              return false;
+            }
+
+            // Check file type
+            if (!this.isTrackedFileType(file.path)) {
+              return false;
+            }
+
+            return true;
+          })
+          .map(async (file) => {
+            const fullPath = path.join(this.repoPath, file.path);
+
+            // Handle deleted files
+            if (file.index === 'D' || file.working_dir === 'D') {
+              return file.path;
+            }
+
+            try {
+              const stats = await fs.promises.stat(fullPath);
+              // Only include files modified after initial setup
+              if (stats.mtimeMs > initialTimestamp) {
+                return file.path;
+              }
+            } catch {
+              // Skip if file can't be accessed
+              return null;
+            }
+            return null;
+          })
+      );
+
+      return trackedFiles.filter((file): file is string => file !== null);
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error getting modified files: ${error}`
+      );
+      return [];
     }
   }
 
@@ -300,84 +379,6 @@ Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString
       'yaml',
     ]);
 
-    // Special handling for HTML files
-    if (ext === 'html') {
-      try {
-        // Check if file is in current workspace
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-          return false;
-        }
-
-        const fullPath = path.resolve(filePath);
-        return workspaceFolders.some((folder) =>
-          fullPath.startsWith(folder.uri.fsPath)
-        );
-      } catch {
-        return false;
-      }
-    }
-
     return supportedExtensions.has(ext);
-  }
-
-  private async getModifiedFiles(): Promise<string[]> {
-    try {
-      const status = await this.git.status();
-      const config = vscode.workspace.getConfiguration('devtrack');
-      const excludePatterns = config.get<string[]>('exclude') || [];
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-
-      if (!workspaceFolders) {
-        return [];
-      }
-
-      const workspacePath = workspaceFolders[0].uri.fsPath;
-
-      return status.files
-        .filter((file) => {
-          // Skip excluded patterns
-          const isExcluded = excludePatterns.some((pattern) =>
-            minimatch(file.path, pattern, { dot: true })
-          );
-
-          // Skip DevTrack's own files
-          const isDevTrackFile =
-            file.path.startsWith('.devtrack/') || file.path === '.gitignore';
-
-          // Check if file path is within current workspace
-          const fullPath = path.join(this.repoPath, file.path);
-          const isInWorkspace = fullPath.startsWith(workspacePath);
-
-          // For deleted files, we don't need to check if they exist
-          const isDeleted = file.index === 'D' || file.working_dir === 'D';
-
-          // Verify file type is supported
-          const isTrackedType = this.isTrackedFileType(file.path);
-
-          // For non-deleted files, verify they exist
-          let fileExists = true;
-          if (!isDeleted) {
-            try {
-              fileExists = fs.existsSync(fullPath);
-            } catch {
-              fileExists = false;
-            }
-          }
-
-          return (
-            !isExcluded &&
-            !isDevTrackFile &&
-            isInWorkspace &&
-            (isDeleted || fileExists)
-          );
-        })
-        .map((file) => file.path);
-    } catch (error) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error getting modified files: ${error}`
-      );
-      return [];
-    }
   }
 }
