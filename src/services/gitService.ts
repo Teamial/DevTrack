@@ -234,38 +234,44 @@ ${defaultIgnores
   }
 
   private async getTrackedFiles(): Promise<string[]> {
-    const status = await this.git.status();
-    const config = vscode.workspace.getConfiguration('devtrack');
-    const excludePatterns = config.get<string[]>('exclude') || [];
+    try {
+      const status = await this.git.status();
+      const config = vscode.workspace.getConfiguration('devtrack');
+      const excludePatterns = config.get<string[]>('exclude') || [];
 
-    // Add common system files to exclude patterns
-    const systemExcludes = [
-      '.DS_Store',
-      'Thumbs.db',
-      'desktop.ini',
-      '*.swp',
-      '.Spotlight-V100',
-      '.Trashes',
-    ];
+      // Get the current workspace path
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        return [];
+      }
+      const workspacePath = workspaceFolders[0].uri.fsPath;
 
-    const allExcludes = [...excludePatterns, ...systemExcludes];
+      return status.files
+        .map((file) => file.path)
+        .filter((file) => {
+          // Only track files within the current workspace
+          const fullPath = path.join(this.repoPath, file);
+          const isInWorkspace = fullPath.startsWith(workspacePath);
 
-    return status.files
-      .map((file) => file.path)
-      .filter((file) => {
-        const isDevTrackFile =
-          file.startsWith('.devtrack/') || file === '.gitignore';
-        const isExcluded = allExcludes.some((pattern) =>
-          minimatch(file, pattern, { dot: true })
-        );
-        return isDevTrackFile || !isExcluded;
-      });
-  }
-  catch(error: any) {
-    this.outputChannel.appendLine(
-      `DevTrack: Error getting tracked files: ${error.message}`
-    );
-    return [];
+          // Skip system files and excluded patterns
+          const isExcluded = excludePatterns.some((pattern) =>
+            minimatch(file, pattern, { dot: true })
+          );
+
+          // Skip DevTrack's own files unless they're in the current workspace
+          const isDevTrackFile =
+            file.startsWith('.devtrack/') || file === '.gitignore';
+
+          return (
+            (isInWorkspace && !isExcluded) || (isDevTrackFile && isInWorkspace)
+          );
+        });
+    } catch (error: any) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error getting tracked files: ${error.message}`
+      );
+      return [];
+    }
   }
 
   async commitAndPush(message: string): Promise<void> {
