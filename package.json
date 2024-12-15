@@ -42,6 +42,10 @@
       {
         "command": "devtrack.logout",
         "title": "DevTrack: Logout from GitHub"
+      },
+      {
+        "command": "devtrack.showGitGuide",
+        "title": "DevTrack: Show Git Installation Guide"
       }
     ],
     "configuration": {

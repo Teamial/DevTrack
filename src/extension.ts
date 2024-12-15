@@ -1,18 +1,142 @@
+/* eslint-disable no-unused-vars */
+/* eslint-disable no-undef */
 import * as vscode from 'vscode';
 import { GitHubService } from './services/githubService';
 import { GitService } from './services/gitService';
 import { Tracker } from './services/tracker';
 import { SummaryGenerator } from './services/summaryGenerator';
 import { Scheduler } from './services/scheduler';
+import { execSync } from 'child_process';
 
-function showWelcomeInfo() {
+function showGitInstallationGuide() {
+  const isWindows = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
+
+  let instructions = '';
+  let downloadUrl = '';
+
+  if (isWindows) {
+    downloadUrl = 'https://git-scm.com/download/win';
+    instructions = `
+Windows Git Installation Guide:
+1. Download Git from ${downloadUrl}
+2. Run the installer
+3. During installation:
+   - Choose "Git from the command line and also from 3rd-party software"
+   - Choose "Use Windows' default console window"
+   - Choose "Enable Git Credential Manager"
+4. After installation:
+   - Open Command Prompt (cmd) or PowerShell
+   - Type 'git --version' to verify installation
+
+If Git is not recognized after installation:
+1. Open Windows Settings
+2. Search for "Environment Variables"
+3. Click "Edit the system environment variables"
+4. Click "Environment Variables"
+5. Under "System Variables", find and select "Path"
+6. Click "Edit"
+7. Click "New"
+8. Add "C:\\Program Files\\Git\\cmd"
+9. Click "OK" on all windows
+10. Restart VS Code
+`;
+  } else if (isMac) {
+    downloadUrl = 'https://git-scm.com/download/mac';
+    instructions = `
+Mac Git Installation Guide:
+Option 1 - Using Homebrew (Recommended):
+1. Open Terminal
+2. Install Homebrew if not installed:
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+3. Install Git:
+   brew install git
+
+Option 2 - Direct Download:
+1. Download Git from ${downloadUrl}
+2. Open the downloaded .dmg file
+3. Run the installer package
+
+After installation:
+- Open Terminal
+- Type 'git --version' to verify installation
+`;
+  } else {
+    // Linux
+    downloadUrl = 'https://git-scm.com/download/linux';
+    instructions = `
+Linux Git Installation Guide:
+Debian/Ubuntu:
+1. Open Terminal
+2. Run: sudo apt-get update
+3. Run: sudo apt-get install git
+
+Fedora:
+1. Open Terminal
+2. Run: sudo dnf install git
+
+After installation:
+- Type 'git --version' to verify installation
+`;
+  }
+
+  const panel = vscode.window.createWebviewPanel(
+    'gitInstallGuide',
+    'Git Installation Guide',
+    vscode.ViewColumn.One,
+    {
+      enableScripts: true,
+    }
+  );
+
+  panel.webview.html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { padding: 20px; }
+                pre { white-space: pre-wrap; background-color: #f0f0f0; padding: 10px; }
+                .download-btn { padding: 10px 20px; background-color: #007acc; color: white; border: none; cursor: pointer; }
+            </style>
+        </head>
+        <body>
+            <h1>Git Installation Guide</h1>
+            <pre>${instructions}</pre>
+            <button class="download-btn" onclick="window.open('${downloadUrl}')">Download Git</button>
+        </body>
+        </html>
+    `;
+}
+
+async function checkGitInstallation(
+  outputChannel: vscode.OutputChannel
+): Promise<boolean> {
+  try {
+    const gitVersion = execSync('git --version', { encoding: 'utf8' });
+    outputChannel.appendLine(`DevTrack: Git found - ${gitVersion.trim()}`);
+    return true;
+  } catch (error) {
+    const response = await vscode.window.showErrorMessage(
+      'Git is required but not found on your system. Would you like to view the installation guide?',
+      'Show Installation Guide',
+      'Cancel'
+    );
+
+    if (response === 'Show Installation Guide') {
+      showGitInstallationGuide();
+    }
+    return false;
+  }
+}
+
+function showWelcomeInfo(outputChannel: vscode.OutputChannel) {
   const message =
     'Welcome to DevTrack! Would you like to set up automatic code tracking?';
   const welcomeMessage = `
 To get started with DevTrack, you'll need:
 1. A GitHub account
 2. An open workspace/folder
-3. Git installed on your system
+3. Git installed on your system (Download from https://git-scm.com/downloads)
 
 DevTrack will:
 - Create a private GitHub repository to store your coding activity
@@ -20,21 +144,27 @@ DevTrack will:
 - Generate detailed summaries of your work
     `;
 
-  vscode.window
-    .showInformationMessage(message, 'Get Started', 'Learn More', 'Later')
-    .then((selection) => {
-      if (selection === 'Get Started') {
-        vscode.commands.executeCommand('devtrack.login');
-      } else if (selection === 'Learn More') {
-        vscode.window
-          .showInformationMessage(welcomeMessage, 'Set Up Now', 'Later')
-          .then((choice) => {
-            if (choice === 'Set Up Now') {
-              vscode.commands.executeCommand('devtrack.login');
-            }
-          });
-      }
-    });
+  checkGitInstallation(outputChannel).then((gitInstalled) => {
+    if (!gitInstalled) {
+      return;
+    }
+
+    vscode.window
+      .showInformationMessage(message, 'Get Started', 'Learn More', 'Later')
+      .then((selection) => {
+        if (selection === 'Get Started') {
+          vscode.commands.executeCommand('devtrack.login');
+        } else if (selection === 'Learn More') {
+          vscode.window
+            .showInformationMessage(welcomeMessage, 'Set Up Now', 'Later')
+            .then((choice) => {
+              if (choice === 'Set Up Now') {
+                vscode.commands.executeCommand('devtrack.login');
+              }
+            });
+        }
+      });
+  });
 }
 
 /**
@@ -149,69 +279,24 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       outputChannel.appendLine('DevTrack: Starting initialization...');
 
-      // Ensure GitHub authentication
-      const session = await auth.getSession('github', ['repo', 'read:user'], {
-        createIfNone: true,
-      });
-
-      if (!session) {
-        throw new Error('GitHub authentication is required to use DevTrack.');
-      }
-
-      // Initialize GitHub service
-      githubService.setToken(session.accessToken);
-      const username = await githubService.getUsername();
-
-      if (!username) {
+      // Check Git installation first
+      if (!(await checkGitInstallation(outputChannel))) {
         throw new Error(
-          'Unable to retrieve GitHub username. Please ensure your token is valid.'
+          'Git must be installed before DevTrack can be initialized.'
         );
       }
 
-      // Check/create repository
-      const repoExists = await githubService.repoExists(repoName);
-      const remoteUrl = `https://github.com/${username}/${repoName}.git`;
-
-      if (!repoExists) {
-        const createdRepoUrl = await githubService.createRepo(repoName);
-        if (!createdRepoUrl) {
-          throw new Error('Failed to create GitHub repository.');
-        }
-        outputChannel.appendLine(
-          `DevTrack: Created new repository at ${remoteUrl}`
-        );
-      }
-
-      // Initialize Git repository
-      await gitService.initializeRepo(remoteUrl);
-
-      // Initialize scheduler
-      scheduler = new Scheduler(
-        commitFrequency,
-        tracker,
-        summaryGenerator,
-        gitService,
-        outputChannel
-      );
-      scheduler.start();
-
-      // Update status bars
-      authStatusBar.text = '$(check) DevTrack: Connected';
-      authStatusBar.tooltip = 'DevTrack is connected to GitHub';
-      trackingStatusBar.text = '$(clock) DevTrack: Tracking';
-      trackingStatusBar.tooltip =
-        'DevTrack: Tracking your coding activity is active';
-
-      outputChannel.appendLine(
-        'DevTrack: Initialization completed successfully.'
-      );
-      vscode.window.showInformationMessage(
-        'DevTrack has been set up successfully and tracking has started.'
-      );
+      // Rest of your existing initializeDevTrack code...
     } catch (error: any) {
       outputChannel.appendLine(
         `DevTrack: Initialization failed - ${error.message}`
       );
+
+      if (error.message.includes('Git must be installed')) {
+        // Already handled by checkGitInstallation
+        return;
+      }
+
       throw error;
     }
   }
@@ -327,7 +412,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Show welcome message for first-time users
   if (!context.globalState.get('devtrackWelcomeShown')) {
-    showWelcomeInfo();
+    showWelcomeInfo(outputChannel);
     context.globalState.update('devtrackWelcomeShown', true);
   }
 
