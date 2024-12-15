@@ -39,36 +39,17 @@ async function main() {
     target: 'node14',
     outfile: 'dist/extension.js',
     external: [
-      'vscode',
-      'path',
-      'fs',
-      'events',
-      'child_process',
-      'crypto',
-      'util',
-      'os',
-      '@octokit/*',
-      'simple-git',
-      'minimatch',
-      'node-schedule'
+      'vscode'  // Only keep vscode as external
     ],
     logLevel: 'silent',
     plugins: [esbuildProblemMatcherPlugin],
     treeShaking: true,
-    metafile: true,
   });
 
   if (watch) {
     await ctx.watch();
   } else {
-    const result = await ctx.rebuild();
-    
-    // Log bundle analysis in non-watch mode
-    if (!watch) {
-      const analysis = await esbuild.analyzeMetafile(result.metafile);
-      console.log('Bundle analysis:', analysis);
-    }
-    
+    await ctx.rebuild();
     await ctx.dispose();
   }
 }
