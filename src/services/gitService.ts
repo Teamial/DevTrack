@@ -1,7 +1,9 @@
 /* eslint-disable no-unused-vars */
+/* eslint-disable no-undef */
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { minimatch } from 'minimatch';
 import { EventEmitter } from 'events';
 import { OutputChannel } from 'vscode';
 
@@ -9,6 +11,7 @@ export class GitService extends EventEmitter {
   private git: SimpleGit;
   private repoPath: string;
   private outputChannel: OutputChannel;
+  private trackingDirectory: string;
 
   constructor(outputChannel: OutputChannel) {
     super();
@@ -24,6 +27,7 @@ export class GitService extends EventEmitter {
 
     const workspaceFolder = workspaceFolders[0].uri.fsPath;
     this.repoPath = workspaceFolder;
+    this.trackingDirectory = path.join(this.repoPath, '.devtrack');
 
     if (!path.isAbsolute(this.repoPath)) {
       vscode.window.showErrorMessage(
@@ -51,6 +55,7 @@ export class GitService extends EventEmitter {
       }
 
       await this.configureRemote(remoteUrl);
+      await this.setupTrackingEnvironment();
       await this.synchronizeWithRemote();
       await this.setupMainBranch();
       await this.createInitialCommit();
@@ -63,6 +68,63 @@ export class GitService extends EventEmitter {
         `DevTrack: Failed to initialize Git repository. ${error.message}`
       );
       throw error;
+    }
+  }
+
+  private async setupTrackingEnvironment(): Promise<void> {
+    try {
+      // Create .gitignore
+      const gitignorePath = path.join(this.repoPath, '.gitignore');
+      const defaultIgnores = [
+        'node_modules/',
+        'dist/',
+        '.DS_Store',
+        'build/',
+        'coverage/',
+        '.env',
+        '*.log',
+        '.vscode/',
+        'temp/',
+        '*.tmp',
+      ].join('\n');
+
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.file(gitignorePath),
+        Buffer.from(defaultIgnores, 'utf8')
+      );
+
+      // Create tracking directory and README
+      await vscode.workspace.fs.createDirectory(
+        vscode.Uri.file(this.trackingDirectory)
+      );
+      const readmePath = path.join(this.trackingDirectory, 'README.md');
+      const readmeContent = `# DevTrack Activity Log
+
+This repository is managed by DevTrack to track your coding activity.
+
+## Structure
+- Daily activity logs are stored in dated directories
+- Changes are automatically committed every 30 minutes
+- Configuration can be modified through VS Code settings
+
+## Excluded Patterns
+The following patterns are excluded by default:
+${defaultIgnores
+  .split('\n')
+  .map((pattern) => `- ${pattern}`)
+  .join('\n')}
+`;
+
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.file(readmePath),
+        Buffer.from(readmeContent, 'utf8')
+      );
+
+      this.outputChannel.appendLine('DevTrack: Set up tracking environment.');
+    } catch (error: any) {
+      throw new Error(
+        `Failed to set up tracking environment: ${error.message}`
+      );
     }
   }
 
@@ -122,17 +184,22 @@ export class GitService extends EventEmitter {
   }
 
   private async createInitialCommit(): Promise<void> {
-    await this.git.add('.');
-    this.outputChannel.appendLine('DevTrack: Staged all changes.');
+    try {
+      // Only stage DevTrack-specific files
+      await this.git.add(['.gitignore', '.devtrack/']);
 
-    const commitMessage = 'DevTrack: Initial commit';
-    const commitSummary = await this.git.commit(commitMessage, [
-      '--allow-empty',
-    ]);
-    if (commitSummary.commit) {
-      this.outputChannel.appendLine(
-        `DevTrack: Made initial commit with message "${commitMessage}".`
-      );
+      const commitMessage = 'DevTrack: Initialize activity tracking';
+      const commitSummary = await this.git.commit(commitMessage, [
+        '--allow-empty',
+      ]);
+
+      if (commitSummary.commit) {
+        this.outputChannel.appendLine(
+          `DevTrack: Made initial commit with message "${commitMessage}".`
+        );
+      }
+    } catch (error: any) {
+      throw new Error(`Failed to create initial commit: ${error.message}`);
     }
   }
 
@@ -153,7 +220,7 @@ export class GitService extends EventEmitter {
     try {
       await this.git.fetch('origin');
       await this.git.reset(['--soft', 'origin/main']);
-      await this.git.add('.');
+      await this.git.add(['.gitignore', '.devtrack/']);
       await this.git.commit('DevTrack: Synchronize with remote', [
         '--allow-empty',
       ]);
@@ -166,16 +233,79 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async getTrackedFiles(): Promise<string[]> {
+    const status = await this.git.status();
+    const config = vscode.workspace.getConfiguration('devtrack');
+    const excludePatterns = config.get<string[]>('exclude') || [];
+
+    return status.files
+      .map((file) => file.path)
+      .filter((file) => {
+        const isDevTrackFile =
+          file.startsWith('.devtrack/') || file === '.gitignore';
+        const isExcluded = excludePatterns.some((pattern) =>
+          minimatch(file, pattern)
+        );
+        return isDevTrackFile || !isExcluded;
+      });
+  }
+
   async commitAndPush(message: string): Promise<void> {
     try {
-      await this.git.add('.');
-      await this.git.commit(message);
-      await this.git.pull('origin', 'main', { '--rebase': 'true' });
-      await this.git.push();
-      this.emit('commit', message);
-      this.outputChannel.appendLine(
-        `DevTrack: Committed changes with message: "${message}"`
-      );
+      const trackedFiles = await this.getTrackedFiles();
+
+      if (trackedFiles.length === 0) {
+        this.outputChannel.appendLine(
+          'DevTrack: No tracked changes to commit.'
+        );
+        return;
+      }
+
+      // First, stash any existing changes
+      await this.git.stash([
+        'push',
+        '-u',
+        '-m',
+        'DevTrack: Temporary stash before pull',
+      ]);
+      this.outputChannel.appendLine('DevTrack: Stashed current changes.');
+
+      try {
+        // Pull latest changes
+        await this.git.pull('origin', 'main', { '--rebase': 'true' });
+        this.outputChannel.appendLine(
+          'DevTrack: Pulled latest changes from remote.'
+        );
+
+        // Pop the stash
+        await this.git.stash(['pop']);
+        this.outputChannel.appendLine('DevTrack: Restored stashed changes.');
+
+        // Stage and commit the files
+        await this.git.add(trackedFiles);
+        await this.git.commit(message);
+
+        // Push the changes
+        await this.git.push();
+
+        this.emit('commit', message);
+        this.outputChannel.appendLine(
+          `DevTrack: Successfully committed and pushed changes with message: "${message}"`
+        );
+      } catch (error: any) {
+        // If anything fails, ensure we restore the stashed changes
+        try {
+          await this.git.stash(['pop']);
+          this.outputChannel.appendLine(
+            'DevTrack: Restored stashed changes after error.'
+          );
+        } catch (stashError) {
+          this.outputChannel.appendLine(
+            'DevTrack: Failed to restore stashed changes. Please check git stash list.'
+          );
+        }
+        throw error;
+      }
     } catch (error: any) {
       this.outputChannel.appendLine(
         `DevTrack: Git commit failed. ${error.message}`
