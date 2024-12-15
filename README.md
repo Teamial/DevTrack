@@ -62,7 +62,7 @@ DevTrack helps developers manage their projects more efficiently by providing au
 3. Choose your tracking preferences in VS Code Settings (`Ctrl+,` or `Cmd+,`):
 ```json
 {
-  "devtrack.repoName": "my-coding-journey",
+  "devtrack.repoName": "code-tracking",
   "devtrack.commitFrequency": 30,
   "devtrack.exclude": [
     "node_modules",
