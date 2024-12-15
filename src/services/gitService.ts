@@ -7,6 +7,7 @@ import * as path from 'path';
 import { minimatch } from 'minimatch';
 import { EventEmitter } from 'events';
 import { OutputChannel } from 'vscode';
+import * as fs from 'fs';
 
 export class GitService extends EventEmitter {
   private git: SimpleGit;
@@ -234,9 +235,24 @@ Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString
         this.outputChannel.appendLine('DevTrack: No remote changes to pull.');
       }
 
-      // Stage and commit only tracked files
+      // Stage and commit only tracked files that exist in workspace
+      let stagedFiles = 0;
       for (const file of trackedFiles) {
-        await this.git.add(file);
+        try {
+          await this.git.add(file);
+          stagedFiles++;
+        } catch (error) {
+          this.outputChannel.appendLine(
+            `DevTrack: Could not stage file ${file}: ${error}`
+          );
+        }
+      }
+
+      if (stagedFiles === 0) {
+        this.outputChannel.appendLine(
+          'DevTrack: No files were staged for commit.'
+        );
+        return;
       }
 
       await this.git.commit(message);
@@ -257,27 +273,59 @@ Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString
   }
 
   private async getModifiedFiles(): Promise<string[]> {
-    const status = await this.git.status();
-    const config = vscode.workspace.getConfiguration('devtrack');
-    const excludePatterns = config.get<string[]>('exclude') || [];
+    try {
+      const status = await this.git.status();
+      const config = vscode.workspace.getConfiguration('devtrack');
+      const excludePatterns = config.get<string[]>('exclude') || [];
+      const workspaceFolders = vscode.workspace.workspaceFolders;
 
-    return status.files
-      .filter((file) => {
-        // Only include files modified after initialization
-        const filePath = path.join(this.repoPath, file.path);
-        const stats = vscode.workspace.fs.stat(vscode.Uri.file(filePath));
+      if (!workspaceFolders) {
+        return [];
+      }
 
-        // Skip excluded patterns
-        const isExcluded = excludePatterns.some((pattern) =>
-          minimatch(file.path, pattern, { dot: true })
-        );
+      const workspacePath = workspaceFolders[0].uri.fsPath;
 
-        // Skip DevTrack's own files
-        const isDevTrackFile =
-          file.path.startsWith('.devtrack/') || file.path === '.gitignore';
+      return status.files
+        .filter((file) => {
+          // Skip excluded patterns
+          const isExcluded = excludePatterns.some((pattern) =>
+            minimatch(file.path, pattern, { dot: true })
+          );
 
-        return !isExcluded && !isDevTrackFile && file.working_dir;
-      })
-      .map((file) => file.path);
+          // Skip DevTrack's own files
+          const isDevTrackFile =
+            file.path.startsWith('.devtrack/') || file.path === '.gitignore';
+
+          // Check if file path is within current workspace
+          const fullPath = path.join(this.repoPath, file.path);
+          const isInWorkspace = fullPath.startsWith(workspacePath);
+
+          // For deleted files, we don't need to check if they exist
+          const isDeleted = file.index === 'D' || file.working_dir === 'D';
+
+          // For non-deleted files, verify they exist
+          let fileExists = true;
+          if (!isDeleted) {
+            try {
+              fileExists = fs.existsSync(fullPath);
+            } catch {
+              fileExists = false;
+            }
+          }
+
+          return (
+            !isExcluded &&
+            !isDevTrackFile &&
+            isInWorkspace &&
+            (isDeleted || fileExists)
+          );
+        })
+        .map((file) => file.path);
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error getting modified files: ${error}`
+      );
+      return [];
+    }
   }
 }
