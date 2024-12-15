@@ -95,16 +95,23 @@ Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/Dev
    cd code-tracking
    ```
 
-2. **Install Dependencies**:
+2. **Create a New Branch**:
+   ```bash
+   git checkout -b feat/your-feature-name
+   # or
+   git checkout -b fix/your-bug-fix
+   ```
+
+3. **Install Dependencies**:
    ```bash
    npm install
    ```
 
-3. **Run the Extension**:
+4. **Run the Extension**:
    - Open the project in VS Code.
    - Press `F5` to start debugging the extension.
 
-4. **Contribute**:
+5. **Contribute**:
    - Follow the Contributor Expectations outlined below.
 
 ---
