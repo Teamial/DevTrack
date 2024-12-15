@@ -2,14 +2,9 @@
 
 ## **Track Your Development Journey with Ease!**
 
-DevTrack is a productivity tool designed to seamlessly track and log your coding activities. It doesn't only provide a clear log of your coding activities but helps accurately reflect your contributions on GitHub. DevTrack integrates directly with your GitHub account to automatically create a history of your progress, making it easy to review, reflect, and share your work. 
+### What's DevTrack?
 
-
----
-
-## About DevTrack
-
-DevTrack helps developers manage their projects more efficiently by providing automated logging and GitHub integration. With a focus on simplicity and productivity, DevTrack tracks changes to your code, commits updates to a dedicated repository, and enables you to visualize your progress over time. Whether you're working on personal projects, contributing to open source, or collaborating with a team, DevTrack is the ultimate tool for staying on top of your development journey.
+DevTrack is a productivity tool designed to seamlessly track and log your coding activities. It doesn't only provide a clear log of your coding activities but helps accurately reflect your contributions on GitHub. With a focus on simplicity and productivity, DevTrack integrates directly with your GitHub account to automatically create a history of your progress, making it easy to review, reflect, and share your work. DevTrack tracks changes to your code, commits updates to a dedicated repository, and enables you to visualize your progress over time. Whether you're working on personal projects, contributing to open source, or collaborating with a team, DevTrack is the ultimate tool for staying on top of your development journey.
 
 ---
 ## **Key Features**
@@ -50,16 +45,17 @@ DevTrack helps developers manage their projects more efficiently by providing au
 
 ## **Getting Started**
 1. **Install the Extension**:
+   - **You must install [Git](https://git-scm.com/downloads) if you haven't already in order for DevTrack to work**
    - Open Visual Studio Code.
    - Go to the Extensions Marketplace (`Ctrl+Shift+X` or `Cmd+Shift+X`).
-   - Search for "DevTrack" and click "Install."
+   - Search for "DevTrack" and click "Install." 
 (**Alternatively**: Install [DevTrack](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack) from VS Code Marketplace)
 
-2. **Log in to GitHub**:
+3. **Log in to GitHub**:
    - Click the GitHub icon in the VS Code status bar.
    - Authenticate with your GitHub account.
      
-3. Choose your tracking preferences in VS Code Settings (`Ctrl+,` or `Cmd+,`):
+4. Choose your tracking preferences in VS Code Settings (`Ctrl+,` or `Cmd+,`):
 ```json
 {
   "devtrack.repoName": "code-tracking",
