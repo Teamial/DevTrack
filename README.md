@@ -43,14 +43,39 @@ DevTrack helps developers manage their projects more efficiently by providing au
 Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/DevTrack/pulls) to add your example!
 
 ---
-## **Features**
+## **Key Features**
 
+1. **Secure GitHub Integration**: Seamlessly authenticate with your GitHub account using VS Code's secure authentication system, ensuring your credentials are safely managed.
 
-1. **Authentication**: Log in securely using GitHub's Authentication API.
-2. **Tracking**: Automatically track changes to your workspace files.
-3. **Commit Logs**: Commit changes to your personal `code-tracking` repository on GitHub.
-4. **Customization**: Configure how often DevTrack commits changes, and specify files or folders to exclude.
-5. **Status Updates**: Get real-time updates via the VS Code status bar.
+2. **Automated Activity Monitoring**: Track your coding progress automatically in the background, capturing changes to your workspace files while respecting your privacy preferences.
+
+3. **Intelligent Version Control**: Maintain a dedicated `code-tracking` repository on GitHub that automatically documents your coding journey through organized commit histories. Each commit captures the essence of your development session.
+
+4. **Flexible Configuration Options**: 
+   - Customize commit frequency to match your workflow
+   - Define specific file patterns to exclude from tracking
+   - Toggle commit confirmation dialogs
+   - Specify custom repository names for activity logging
+
+5. **Real-Time Status Indicators**: Stay informed about your tracking status through VS Code's status bar, providing immediate visibility into:
+   - Active tracking status
+   - Last commit timestamp
+   - GitHub connection status
+   - Sync status with remote repository
+
+6. **Seamless Workspace Integration**: Works quietly in the background of any VS Code workspace, requiring minimal setup while maintaining a comprehensive record of your development activities.
+
+7. **Smart Synchronization**: 
+   - Handles remote repository management automatically
+   - Resolves conflicts intelligently
+   - Maintains data integrity across multiple development sessions
+   - Preserves your existing workspace configurations
+
+8. **Development Timeline**: 
+   - Creates a chronological record of your coding activities
+   - Documents file modifications and project progress
+   - Maintains a searchable history of your development journey
+   - Helps track time invested in different projects
    
 ---
 ## Personal Example
