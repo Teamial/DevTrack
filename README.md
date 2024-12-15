@@ -12,37 +12,6 @@ DevTrack is a productivity tool designed to seamlessly track and log your coding
 DevTrack helps developers manage their projects more efficiently by providing automated logging and GitHub integration. With a focus on simplicity and productivity, DevTrack tracks changes to your code, commits updates to a dedicated repository, and enables you to visualize your progress over time. Whether you're working on personal projects, contributing to open source, or collaborating with a team, DevTrack is the ultimate tool for staying on top of your development journey.
 
 ---
-
-## **Getting Started**
-1. **Install the Extension**:
-   - Open Visual Studio Code.
-   - Go to the Extensions Marketplace (`Ctrl+Shift+X` or `Cmd+Shift+X`).
-   - Search for "DevTrack" and click "Install."
-(**Alternatively**: Install [DevTrack](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack) from VS Code Marketplace)
-
-2. **Log in to GitHub**:
-   - Click the GitHub icon in the VS Code status bar.
-   - Authenticate with your GitHub account.
-     
-3. Choose your tracking preferences in VS Code Settings (`Ctrl+,` or `Cmd+,`):
-```json
-{
-  "devtrack.repoName": "my-coding-journey",
-  "devtrack.commitFrequency": 30,
-  "devtrack.exclude": [
-    "node_modules",
-    "dist",
-    ".git"
-  ]
-}
-```
-4. Start tracking with `DevTrack: Start Tracking` command in the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
-5. **View Your Progress**:
-   - Visit your `code-tracking` repository on GitHub to see your logs.
-
-Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/DevTrack/pulls) to add your example!
-
----
 ## **Key Features**
 
 1. **Secure GitHub Integration**: Seamlessly authenticate with your GitHub account using VS Code's secure authentication system, ensuring your credentials are safely managed.
@@ -78,7 +47,38 @@ Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/Dev
    - Helps track time invested in different projects
    
 ---
-## Personal Example
+
+## **Getting Started**
+1. **Install the Extension**:
+   - Open Visual Studio Code.
+   - Go to the Extensions Marketplace (`Ctrl+Shift+X` or `Cmd+Shift+X`).
+   - Search for "DevTrack" and click "Install."
+(**Alternatively**: Install [DevTrack](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack) from VS Code Marketplace)
+
+2. **Log in to GitHub**:
+   - Click the GitHub icon in the VS Code status bar.
+   - Authenticate with your GitHub account.
+     
+3. Choose your tracking preferences in VS Code Settings (`Ctrl+,` or `Cmd+,`):
+```json
+{
+  "devtrack.repoName": "my-coding-journey",
+  "devtrack.commitFrequency": 30,
+  "devtrack.exclude": [
+    "node_modules",
+    "dist",
+    ".git"
+  ]
+}
+```
+4. Start tracking with `DevTrack: Start Tracking` command in the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
+5. **View Your Progress**:
+   - Visit your `code-tracking` repository on GitHub to see your logs.
+
+Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/DevTrack/pulls) to add your example!
+
+---
+## Preview Example
 
 ![Project Tracking Example](https://github.com/user-attachments/assets/eeab8b20-203d-441c-af2e-969c6cdeb980)
 - Repository: [code-tracking](https://github.com/username/code-tracking)
@@ -120,6 +120,5 @@ Contributions to improve DevTrack are always welcome! Here's how you can help:
 ---
 
 ### **Start Tracking Your Coding Journey with DevTrack Today!**
-
 [**Buy Me a Coffee!**](https://marketplace.visualstudio.com/items?itemName=TeannaCole.devtrack)
 
