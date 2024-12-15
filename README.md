@@ -81,7 +81,7 @@ Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/Dev
 ## Preview Example
 
 ![Project Tracking Example](https://github.com/user-attachments/assets/eeab8b20-203d-441c-af2e-969c6cdeb980)
-- Repository: [code-tracking](https://github.com/username/code-tracking)
+- Repository: [code-tracking](https://github.com/Teamial/code-tracking)
 - Shows daily coding patterns
 - Tracks multiple project files
 - Automatic commits every 30 minutes
