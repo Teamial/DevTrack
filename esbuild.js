@@ -9,7 +9,6 @@ const watch = process.argv.includes('--watch');
  */
 const esbuildProblemMatcherPlugin = {
   name: 'esbuild-problem-matcher',
-
   setup(build) {
     build.onStart(() => {
       console.log('[build] Build started');
@@ -32,26 +31,49 @@ async function main() {
   const ctx = await esbuild.context({
     entryPoints: ['src/extension.ts'],
     bundle: true,
-    format: 'cjs', 
+    format: 'cjs',
     minify: production,
     sourcemap: !production,
     sourcesContent: false,
     platform: 'node',
+    target: 'node14',
     outfile: 'dist/extension.js',
-    external: ['vscode'],
+    external: [
+      'vscode',
+      'path',
+      'fs',
+      'events',
+      'child_process',
+      'crypto',
+      'util',
+      'os',
+      '@octokit/*',
+      'simple-git',
+      'minimatch',
+      'node-schedule'
+    ],
     logLevel: 'silent',
     plugins: [esbuildProblemMatcherPlugin],
+    treeShaking: true,
+    metafile: true,
   });
 
   if (watch) {
     await ctx.watch();
   } else {
-    await ctx.rebuild();
+    const result = await ctx.rebuild();
+    
+    // Log bundle analysis in non-watch mode
+    if (!watch) {
+      const analysis = await esbuild.analyzeMetafile(result.metafile);
+      console.log('Bundle analysis:', analysis);
+    }
+    
     await ctx.dispose();
   }
 }
 
 main().catch(e => {
-  console.error(e); 
+  console.error(e);
   process.exit(1);
 });

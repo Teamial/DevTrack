@@ -90,9 +90,7 @@
   },
   "dependencies": {
     "@octokit/rest": "^21.0.2",
-    "diff": "^7.0.0",
     "minimatch": "^10.0.1",
-    "node-schedule": "^2.1.1",
     "simple-git": "^3.27.0"
   },
   "devDependencies": {
@@ -112,5 +110,8 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "vsce": "^2.15.0"
-  }
+  },
+  "extensionDependencies": [
+    "vscode.git"
+  ]
 }

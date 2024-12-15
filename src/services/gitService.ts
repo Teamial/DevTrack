@@ -172,7 +172,7 @@ export class GitService extends EventEmitter {
 
     await vscode.workspace.fs.writeFile(
       vscode.Uri.file(gitignorePath),
-      Buffer.from(defaultIgnores, 'utf8')
+      Uint8Array.from(Buffer.from(defaultIgnores, 'utf8'))
     );
   }
 
@@ -272,6 +272,55 @@ Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString
     }
   }
 
+  private isTrackedFileType(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase().slice(1);
+    const supportedExtensions = new Set([
+      'ts',
+      'js',
+      'py',
+      'java',
+      'c',
+      'cpp',
+      'h',
+      'hpp',
+      'css',
+      'scss',
+      'html',
+      'jsx',
+      'tsx',
+      'vue',
+      'php',
+      'rb',
+      'go',
+      'rs',
+      'swift',
+      'md',
+      'json',
+      'yml',
+      'yaml',
+    ]);
+
+    // Special handling for HTML files
+    if (ext === 'html') {
+      try {
+        // Check if file is in current workspace
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+          return false;
+        }
+
+        const fullPath = path.resolve(filePath);
+        return workspaceFolders.some((folder) =>
+          fullPath.startsWith(folder.uri.fsPath)
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    return supportedExtensions.has(ext);
+  }
+
   private async getModifiedFiles(): Promise<string[]> {
     try {
       const status = await this.git.status();
@@ -302,6 +351,9 @@ Only files modified after ${new Date(this.initialCommitTimestamp).toLocaleString
 
           // For deleted files, we don't need to check if they exist
           const isDeleted = file.index === 'D' || file.working_dir === 'D';
+
+          // Verify file type is supported
+          const isTrackedType = this.isTrackedFileType(file.path);
 
           // For non-deleted files, verify they exist
           let fileExists = true;

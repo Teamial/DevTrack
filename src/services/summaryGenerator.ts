@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable no-useless-escape */
 // src/services/summaryGenerator.ts
 import * as vscode from 'vscode';
@@ -53,60 +54,69 @@ export class SummaryGenerator {
     }
 
     const lines = diff.split('\n');
-    const changes: string[] = [];
+    const changes: {
+      modified: Set<string>;
+      added: Set<string>;
+      removed: Set<string>;
+    } = {
+      modified: new Set(),
+      added: new Set(),
+      removed: new Set(),
+    };
+
     let currentFunction = '';
 
     for (const line of lines) {
-      // Skip empty lines and comment-only changes
+      // Skip empty lines and comments
       if (!line.trim() || line.match(/^[\+\-]\s*\/\//)) {
         continue;
       }
 
-      // Look for function/method changes
+      // Function/method/class detection
       const functionMatch = line.match(
-        /^[\+\-]([\s]*(function|class|const|let|var|async)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)|[a-zA-Z_$][a-zA-Z0-9_$]*\s*=\s*(function|\(.*\)\s*=>))/
+        /^([\+\-])\s*(async\s+)?((function|class|const|let|var)\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)/
       );
 
       if (functionMatch) {
-        currentFunction = functionMatch[0].replace(/^[\+\-]/, '').trim();
+        const [_, changeType, _async, _keyword, _type, name] = functionMatch;
 
-        // Extract just the function name
-        const nameMatch = currentFunction.match(/([a-zA-Z_$][a-zA-Z0-9_$]*)/);
-        if (nameMatch) {
-          changes.push(`modified ${nameMatch[0]}`);
+        if (changeType === '+') {
+          changes.added.add(name);
+        } else if (changeType === '-') {
+          changes.removed.add(name);
         }
+
+        // If both added and removed, it's a modification
+        if (changes.added.has(name) && changes.removed.has(name)) {
+          changes.modified.add(name);
+          changes.added.delete(name);
+          changes.removed.delete(name);
+        }
+
         continue;
       }
-
-      // Look for significant code changes (non-whitespace)
-      if (
-        (line.startsWith('+') || line.startsWith('-')) &&
-        line.trim().length > 5 &&
-        !currentFunction
-      ) {
-        const cleanLine = line.replace(/^[\+\-]/, '').trim();
-
-        // Add meaningful changes, avoiding duplicates
-        if (!changes.includes(cleanLine)) {
-          changes.push(cleanLine);
-        }
-      }
     }
 
-    // Return a meaningful summary
-    if (changes.length === 0) {
-      return filename;
+    // Build change description
+    const descriptions: string[] = [];
+
+    if (changes.modified.size > 0) {
+      descriptions.push(`modified ${Array.from(changes.modified).join(', ')}`);
+    }
+    if (changes.added.size > 0) {
+      descriptions.push(`added ${Array.from(changes.added).join(', ')}`);
+    }
+    if (changes.removed.size > 0) {
+      descriptions.push(`removed ${Array.from(changes.removed).join(', ')}`);
     }
 
-    // Limit the summary length but indicate if there are more changes
-    const summary = changes.slice(0, 2).join(', ');
-    return `${filename} (${summary}${changes.length > 2 ? '...' : ''})`;
+    return descriptions.length > 0
+      ? `${filename} (${descriptions.join('; ')})`
+      : filename;
   }
 
   async generateSummary(changedFiles: Change[]): Promise<string> {
     try {
-      const stats = this.calculateChangeStats(changedFiles);
-
       // Get detailed file changes
       const fileChanges = await Promise.all(
         changedFiles.map((change) => this.getFileChanges(change))
@@ -116,35 +126,31 @@ export class SummaryGenerator {
       const context = this.projectContext.getContextForSummary(changedFiles);
 
       // Build the summary
-      let summary = 'DevTrack: ';
+      let summary = 'DevTrack:';
 
-      // Add branch and file context if available
+      // Add branch context
       if (context) {
-        summary += context;
+        summary += ` ${context}`;
       }
 
-      // Add detailed changes if available, otherwise fall back to basic stats
+      // Add file changes
       if (significantChanges.length > 0) {
-        if (context) {
-          summary += '| ';
-        }
-        summary += `Changes in: ${significantChanges.join('; ')}`;
+        summary += ` | Changes in: ${significantChanges.join('; ')}`;
       } else {
+        // Fallback to basic stats
+        const stats = this.calculateChangeStats(changedFiles);
         const changeDetails = [];
         if (stats.added > 0) {
-          changeDetails.push(`${stats.added} added`);
+          changeDetails.push(`${stats.added} files added`);
         }
         if (stats.modified > 0) {
-          changeDetails.push(`${stats.modified} modified`);
+          changeDetails.push(`${stats.modified} files modified`);
         }
         if (stats.deleted > 0) {
-          changeDetails.push(`${stats.deleted} deleted`);
+          changeDetails.push(`${stats.deleted} files deleted`);
         }
 
-        if (context) {
-          summary += '| ';
-        }
-        summary += changeDetails.join(', ');
+        summary += ` | ${changeDetails.join(', ')}`;
       }
 
       // Save commit info and return summary

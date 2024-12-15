@@ -10814,68 +10814,72 @@ var SummaryGenerator = class {
       return filename;
     }
     const lines = diff.split("\n");
-    const changes = [];
+    const changes = {
+      modified: /* @__PURE__ */ new Set(),
+      added: /* @__PURE__ */ new Set(),
+      removed: /* @__PURE__ */ new Set()
+    };
     let currentFunction = "";
     for (const line of lines) {
       if (!line.trim() || line.match(/^[\+\-]\s*\/\//)) {
         continue;
       }
       const functionMatch = line.match(
-        /^[\+\-]([\s]*(function|class|const|let|var|async)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)|[a-zA-Z_$][a-zA-Z0-9_$]*\s*=\s*(function|\(.*\)\s*=>))/
+        /^([\+\-])\s*(async\s+)?((function|class|const|let|var)\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)/
       );
       if (functionMatch) {
-        currentFunction = functionMatch[0].replace(/^[\+\-]/, "").trim();
-        const nameMatch = currentFunction.match(/([a-zA-Z_$][a-zA-Z0-9_$]*)/);
-        if (nameMatch) {
-          changes.push(`modified ${nameMatch[0]}`);
+        const [_, changeType, _async, _keyword, _type, name] = functionMatch;
+        if (changeType === "+") {
+          changes.added.add(name);
+        } else if (changeType === "-") {
+          changes.removed.add(name);
+        }
+        if (changes.added.has(name) && changes.removed.has(name)) {
+          changes.modified.add(name);
+          changes.added.delete(name);
+          changes.removed.delete(name);
         }
         continue;
       }
-      if ((line.startsWith("+") || line.startsWith("-")) && line.trim().length > 5 && !currentFunction) {
-        const cleanLine = line.replace(/^[\+\-]/, "").trim();
-        if (!changes.includes(cleanLine)) {
-          changes.push(cleanLine);
-        }
-      }
     }
-    if (changes.length === 0) {
-      return filename;
+    const descriptions = [];
+    if (changes.modified.size > 0) {
+      descriptions.push(`modified ${Array.from(changes.modified).join(", ")}`);
     }
-    const summary = changes.slice(0, 2).join(", ");
-    return `${filename} (${summary}${changes.length > 2 ? "..." : ""})`;
+    if (changes.added.size > 0) {
+      descriptions.push(`added ${Array.from(changes.added).join(", ")}`);
+    }
+    if (changes.removed.size > 0) {
+      descriptions.push(`removed ${Array.from(changes.removed).join(", ")}`);
+    }
+    return descriptions.length > 0 ? `${filename} (${descriptions.join("; ")})` : filename;
   }
   async generateSummary(changedFiles) {
     try {
-      const stats = this.calculateChangeStats(changedFiles);
       const fileChanges = await Promise.all(
         changedFiles.map((change) => this.getFileChanges(change))
       );
       const significantChanges = fileChanges.filter(Boolean);
       const context = this.projectContext.getContextForSummary(changedFiles);
-      let summary = "DevTrack: ";
+      let summary = "DevTrack:";
       if (context) {
-        summary += context;
+        summary += ` ${context}`;
       }
       if (significantChanges.length > 0) {
-        if (context) {
-          summary += "| ";
-        }
-        summary += `Changes in: ${significantChanges.join("; ")}`;
+        summary += ` | Changes in: ${significantChanges.join("; ")}`;
       } else {
+        const stats = this.calculateChangeStats(changedFiles);
         const changeDetails = [];
         if (stats.added > 0) {
-          changeDetails.push(`${stats.added} added`);
+          changeDetails.push(`${stats.added} files added`);
         }
         if (stats.modified > 0) {
-          changeDetails.push(`${stats.modified} modified`);
+          changeDetails.push(`${stats.modified} files modified`);
         }
         if (stats.deleted > 0) {
-          changeDetails.push(`${stats.deleted} deleted`);
+          changeDetails.push(`${stats.deleted} files deleted`);
         }
-        if (context) {
-          summary += "| ";
-        }
-        summary += changeDetails.join(", ");
+        summary += ` | ${changeDetails.join(", ")}`;
       }
       await this.projectContext.addCommit(summary, changedFiles);
       this.outputChannel.appendLine(
