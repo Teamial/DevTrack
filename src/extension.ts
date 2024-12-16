@@ -8,18 +8,68 @@ import { SummaryGenerator } from './services/summaryGenerator';
 import { Scheduler } from './services/scheduler';
 import { execSync } from 'child_process';
 
-function showGitInstallationGuide() {
-  const isWindows = process.platform === 'win32';
-  const isMac = process.platform === 'darwin';
+// Interface for services
+interface DevTrackServices {
+  outputChannel: vscode.OutputChannel;
+  githubService: GitHubService;
+  gitService: GitService;
+  tracker: Tracker;
+  summaryGenerator: SummaryGenerator;
+  scheduler: Scheduler | null;
+  trackingStatusBar: vscode.StatusBarItem;
+  authStatusBar: vscode.StatusBarItem;
+}
 
-  let instructions = '';
-  let downloadUrl = '';
+// Git installation handling
+class GitInstallationHandler {
+  private static readonly DOWNLOAD_URLS = {
+    win32: 'https://git-scm.com/download/win',
+    darwin: 'https://git-scm.com/download/mac',
+    linux: 'https://git-scm.com/download/linux',
+  };
 
-  if (isWindows) {
-    downloadUrl = 'https://git-scm.com/download/win';
-    instructions = `
-Windows Git Installation Guide:
-1. Download Git from ${downloadUrl}
+  static async checkGitInstallation(
+    outputChannel: vscode.OutputChannel
+  ): Promise<boolean> {
+    try {
+      const gitVersion = execSync('git --version', { encoding: 'utf8' });
+      outputChannel.appendLine(`DevTrack: Git found - ${gitVersion.trim()}`);
+      return true;
+    } catch (error) {
+      const response = await vscode.window.showErrorMessage(
+        'Git is required but not found on your system. Would you like to view the installation guide?',
+        'Show Installation Guide',
+        'Cancel'
+      );
+
+      if (response === 'Show Installation Guide') {
+        this.showInstallationGuide();
+      }
+      return false;
+    }
+  }
+
+  static showInstallationGuide() {
+    const platform = process.platform;
+    const downloadUrl =
+      this.DOWNLOAD_URLS[platform as keyof typeof this.DOWNLOAD_URLS];
+    const instructions = this.getInstructions(platform);
+
+    const panel = vscode.window.createWebviewPanel(
+      'gitInstallGuide',
+      'Git Installation Guide',
+      vscode.ViewColumn.One,
+      { enableScripts: true }
+    );
+
+    panel.webview.html = this.getWebviewContent(instructions, downloadUrl);
+  }
+
+  private static getInstructions(platform: string): string {
+    // Platform-specific installation instructions
+    const instructions = {
+      win32: `Windows Git Installation Guide:
+1. Download Git from ${this.DOWNLOAD_URLS.win32}
 2. Run the installer
 3. During installation:
    - Choose "Git from the command line and also from 3rd-party software"
@@ -39,12 +89,8 @@ If Git is not recognized after installation:
 7. Click "New"
 8. Add "C:\\Program Files\\Git\\cmd"
 9. Click "OK" on all windows
-10. Restart VS Code
-`;
-  } else if (isMac) {
-    downloadUrl = 'https://git-scm.com/download/mac';
-    instructions = `
-Mac Git Installation Guide:
+10. Restart VS Code`,
+      darwin: `Mac Git Installation Guide:
 Option 1 - Using Homebrew (Recommended):
 1. Open Terminal
 2. Install Homebrew if not installed:
@@ -53,19 +99,14 @@ Option 1 - Using Homebrew (Recommended):
    brew install git
 
 Option 2 - Direct Download:
-1. Download Git from ${downloadUrl}
+1. Download Git from ${this.DOWNLOAD_URLS.darwin}
 2. Open the downloaded .dmg file
 3. Run the installer package
 
 After installation:
 - Open Terminal
-- Type 'git --version' to verify installation
-`;
-  } else {
-    // Linux
-    downloadUrl = 'https://git-scm.com/download/linux';
-    instructions = `
-Linux Git Installation Guide:
+- Type 'git --version' to verify installation`,
+      linux: `Linux Git Installation Guide:
 Debian/Ubuntu:
 1. Open Terminal
 2. Run: sudo apt-get update
@@ -76,59 +117,46 @@ Fedora:
 2. Run: sudo dnf install git
 
 After installation:
-- Type 'git --version' to verify installation
-`;
-  }
+- Type 'git --version' to verify installation`,
+    };
 
-  const panel = vscode.window.createWebviewPanel(
-    'gitInstallGuide',
-    'Git Installation Guide',
-    vscode.ViewColumn.One,
-    {
-      enableScripts: true,
-    }
-  );
-
-  panel.webview.html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body { padding: 20px; }
-                pre { white-space: pre-wrap; background-color: #f0f0f0; padding: 10px; }
-                .download-btn { padding: 10px 20px; background-color: #007acc; color: white; border: none; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <h1>Git Installation Guide</h1>
-            <pre>${instructions}</pre>
-            <button class="download-btn" onclick="window.open('${downloadUrl}')">Download Git</button>
-        </body>
-        </html>
-    `;
-}
-
-async function checkGitInstallation(
-  outputChannel: vscode.OutputChannel
-): Promise<boolean> {
-  try {
-    const gitVersion = execSync('git --version', { encoding: 'utf8' });
-    outputChannel.appendLine(`DevTrack: Git found - ${gitVersion.trim()}`);
-    return true;
-  } catch (error) {
-    const response = await vscode.window.showErrorMessage(
-      'Git is required but not found on your system. Would you like to view the installation guide?',
-      'Show Installation Guide',
-      'Cancel'
+    return (
+      instructions[platform as keyof typeof instructions] || instructions.linux
     );
+  }
 
-    if (response === 'Show Installation Guide') {
-      showGitInstallationGuide();
-    }
-    return false;
+  private static getWebviewContent(
+    instructions: string,
+    downloadUrl: string
+  ): string {
+    return `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { padding: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+                    pre { white-space: pre-wrap; background-color: #f3f3f3; padding: 15px; border-radius: 5px; }
+                    .download-btn { 
+                        padding: 10px 20px; 
+                        background-color: #007acc; 
+                        color: white; 
+                        border: none; 
+                        border-radius: 5px;
+                        cursor: pointer;
+                        margin-top: 20px;
+                    }
+                    .download-btn:hover { background-color: #005999; }
+                </style>
+            </head>
+            <body>
+                <h1>Git Installation Guide</h1>
+                <pre>${instructions}</pre>
+                <button class="download-btn" onclick="window.open('${downloadUrl}')">Download Git</button>
+            </body>
+            </html>
+        `;
   }
 }
-
 function showWelcomeInfo(outputChannel: vscode.OutputChannel) {
   const message =
     'Welcome to DevTrack! Would you like to set up automatic code tracking?';
@@ -142,316 +170,456 @@ DevTrack will:
 - Create a private GitHub repository to store your coding activity
 - Automatically track and commit your changes
 - Generate detailed summaries of your work
-    `;
+  `;
 
-  checkGitInstallation(outputChannel).then((gitInstalled) => {
-    if (!gitInstalled) {
-      return;
+  GitInstallationHandler.checkGitInstallation(outputChannel).then(
+    (gitInstalled) => {
+      if (!gitInstalled) {
+        return;
+      }
+
+      vscode.window
+        .showInformationMessage(message, 'Get Started', 'Learn More', 'Later')
+        .then((selection) => {
+          if (selection === 'Get Started') {
+            vscode.commands.executeCommand('devtrack.login');
+          } else if (selection === 'Learn More') {
+            vscode.window
+              .showInformationMessage(welcomeMessage, 'Set Up Now', 'Later')
+              .then((choice) => {
+                if (choice === 'Set Up Now') {
+                  vscode.commands.executeCommand('devtrack.login');
+                }
+              });
+          }
+        });
     }
-
-    vscode.window
-      .showInformationMessage(message, 'Get Started', 'Learn More', 'Later')
-      .then((selection) => {
-        if (selection === 'Get Started') {
-          vscode.commands.executeCommand('devtrack.login');
-        } else if (selection === 'Learn More') {
-          vscode.window
-            .showInformationMessage(welcomeMessage, 'Set Up Now', 'Later')
-            .then((choice) => {
-              if (choice === 'Set Up Now') {
-                vscode.commands.executeCommand('devtrack.login');
-              }
-            });
-        }
-      });
-  });
+  );
 }
 
-/**
- * This method is called when the extension is activated.
- */
+// Extension activation handler
 export async function activate(context: vscode.ExtensionContext) {
-  // Create Output Channel
+  const services = await initializeServices(context);
+  if (!services) {
+    return;
+  }
+
+  registerCommands(context, services);
+  setupConfigurationHandling(services);
+  showWelcomeMessage(context, services);
+}
+
+async function initializeServices(
+  context: vscode.ExtensionContext
+): Promise<DevTrackServices | null> {
   const outputChannel = vscode.window.createOutputChannel('DevTrack');
   context.subscriptions.push(outputChannel);
   outputChannel.appendLine('DevTrack: Extension activated.');
 
-  // Initialize services with OutputChannel for logging
-  const githubService = new GitHubService(outputChannel);
-  const gitService = new GitService(outputChannel);
-  const tracker = new Tracker(outputChannel);
-  const summaryGenerator = new SummaryGenerator(outputChannel, context);
+  // Initialize basic services
+  const services: DevTrackServices = {
+    outputChannel,
+    githubService: new GitHubService(outputChannel),
+    gitService: new GitService(outputChannel),
+    tracker: new Tracker(outputChannel),
+    summaryGenerator: new SummaryGenerator(outputChannel, context),
+    scheduler: null,
+    trackingStatusBar: createStatusBarItem('tracking'),
+    authStatusBar: createStatusBarItem('auth'),
+  };
 
-  // Retrieve configuration settings from 'devtrack'
+  // Add status bars to subscriptions
+  context.subscriptions.push(
+    services.trackingStatusBar,
+    services.authStatusBar
+  );
+
+  // Load and validate configuration
+  if (!(await loadConfiguration(services))) {
+    return null;
+  }
+
+  return services;
+}
+
+function createStatusBarItem(type: 'tracking' | 'auth'): vscode.StatusBarItem {
+  const item = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    type === 'tracking' ? 100 : 101
+  );
+
+  if (type === 'tracking') {
+    item.text = '$(circle-slash) DevTrack: Stopped';
+    item.tooltip = 'DevTrack: Tracking is stopped';
+  } else {
+    item.text = '$(mark-github) DevTrack: Not Connected';
+    item.tooltip = 'DevTrack Status';
+  }
+
+  item.show();
+  return item;
+}
+
+async function loadConfiguration(services: DevTrackServices): Promise<boolean> {
   const config = vscode.workspace.getConfiguration('devtrack');
   const repoName = config.get<string>('repoName') || 'code-tracking';
-  const commitFrequency = config.get<number>('commitFrequency') || 30; // Default to 30 minutes
-  const excludePatterns = config.get<string[]>('exclude') || [];
-  const confirmBeforeCommit =
-    config.get<boolean>('confirmBeforeCommit') || true;
 
-  outputChannel.appendLine(`DevTrack Configuration:
-        Repository Name: ${repoName}
-        Commit Frequency: ${commitFrequency} minutes
-        Exclude Patterns: ${excludePatterns.join(', ') || 'None'}
-        Confirm Before Commit: ${confirmBeforeCommit}
-    `);
-
-  // Check repository name
   if (!repoName || repoName.trim() === '') {
     vscode.window.showErrorMessage(
       'DevTrack: Repository name is not set correctly in the configuration.'
     );
-    outputChannel.appendLine(
+    services.outputChannel.appendLine(
       'DevTrack: Repository name is missing or invalid.'
     );
-    return;
-  }
-  outputChannel.appendLine(`DevTrack: Using repository name "${repoName}".`);
-
-  // Use VS Code's Authentication API for GitHub
-  const auth = vscode.authentication;
-  let session: vscode.AuthenticationSession | undefined;
-
-  // Initialize Status Bar Items
-  const trackingStatusBar = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
-  );
-  trackingStatusBar.text = '$(circle-slash) DevTrack: Stopped';
-  trackingStatusBar.tooltip = 'DevTrack: Tracking is stopped';
-  trackingStatusBar.show();
-  context.subscriptions.push(trackingStatusBar);
-
-  const authStatusBar = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    101
-  );
-  authStatusBar.text = '$(mark-github) DevTrack: Not Connected';
-  authStatusBar.tooltip = 'DevTrack Status';
-  authStatusBar.show();
-  context.subscriptions.push(authStatusBar);
-
-  // Declare scheduler outside to make it accessible in commands
-  let scheduler: Scheduler | null = null;
-
-  // Handle Logout Function
-  async function handleLogout() {
-    const confirm = await vscode.window.showWarningMessage(
-      'Are you sure you want to logout from DevTrack?',
-      { modal: true },
-      'Yes',
-      'No'
-    );
-
-    if (confirm !== 'Yes') {
-      outputChannel.appendLine('DevTrack: Logout canceled by user.');
-      return;
-    }
-
-    githubService.setToken('');
-    authStatusBar.text = '$(mark-github) DevTrack: Not Connected';
-    authStatusBar.tooltip = 'DevTrack Status';
-    trackingStatusBar.text = '$(circle-slash) DevTrack: Stopped';
-    trackingStatusBar.tooltip = 'DevTrack: Tracking is stopped';
-
-    if (scheduler) {
-      scheduler.stop();
-      scheduler = null;
-      outputChannel.appendLine('DevTrack: Scheduler stopped due to logout.');
-    }
-
-    const loginChoice = await vscode.window.showInformationMessage(
-      'DevTrack: Successfully logged out. Would you like to log in with a different account?',
-      'Yes',
-      'No'
-    );
-
-    if (loginChoice === 'Yes') {
-      vscode.commands.executeCommand('devtrack.login');
-    }
-
-    outputChannel.appendLine('DevTrack: User logged out.');
+    return false;
   }
 
-  // Initialize DevTrack Function
-  async function initializeDevTrack() {
-    try {
-      outputChannel.appendLine('DevTrack: Starting initialization...');
+  return true;
+}
+// ... [Previous code remains the same] ...
 
-      // Check Git installation first
-      if (!(await checkGitInstallation(outputChannel))) {
-        throw new Error(
-          'Git must be installed before DevTrack can be initialized.'
-        );
-      }
-
-      // Rest of your existing initializeDevTrack code...
-    } catch (error: any) {
-      outputChannel.appendLine(
-        `DevTrack: Initialization failed - ${error.message}`
-      );
-
-      if (error.message.includes('Git must be installed')) {
-        // Already handled by checkGitInstallation
-        return;
-      }
-
-      throw error;
-    }
-  }
-
-  // Register Commands
+async function registerCommands(
+  context: vscode.ExtensionContext,
+  services: DevTrackServices
+) {
+  // Start Tracking Command
   const startTracking = vscode.commands.registerCommand(
     'devtrack.startTracking',
     async () => {
       try {
+        // Check for workspace
         if (!vscode.workspace.workspaceFolders?.length) {
           throw new Error(
             'Please open a folder or workspace before starting tracking.'
           );
         }
 
-        const session = await auth.getSession('github', ['repo', 'read:user'], {
-          createIfNone: false,
-        });
-
-        if (!session) {
-          const response = await vscode.window.showErrorMessage(
-            'DevTrack requires GitHub authentication to start tracking. Would you like to sign in now?',
-            'Sign in to GitHub',
-            'Cancel'
-          );
-
-          if (response === 'Sign in to GitHub') {
-            await vscode.commands.executeCommand('devtrack.login');
-          }
+        // Check Git installation
+        if (
+          !(await GitInstallationHandler.checkGitInstallation(
+            services.outputChannel
+          ))
+        ) {
           return;
         }
 
-        if (scheduler) {
-          scheduler.start();
-          trackingStatusBar.text = '$(clock) DevTrack: Tracking';
-          trackingStatusBar.tooltip =
-            'DevTrack: Tracking your coding activity is active';
+        // Check GitHub authentication
+        if (!(await ensureGitHubAuth(services))) {
+          return;
+        }
+
+        if (services.scheduler) {
+          services.scheduler.start();
+          updateStatusBar(services, 'tracking', true);
           vscode.window.showInformationMessage('DevTrack: Tracking started.');
-          outputChannel.appendLine('DevTrack: Tracking started manually.');
+          services.outputChannel.appendLine(
+            'DevTrack: Tracking started manually.'
+          );
         } else {
-          const response = await vscode.window.showErrorMessage(
+          const response = await vscode.window.showInformationMessage(
             'DevTrack needs to be set up before starting. Would you like to set it up now?',
             'Set Up DevTrack',
             'Cancel'
           );
 
           if (response === 'Set Up DevTrack') {
-            await initializeDevTrack();
+            await initializeDevTrack(services);
           }
         }
       } catch (error: any) {
-        outputChannel.appendLine(
-          `DevTrack: Error starting tracking - ${error.message}`
-        );
-        vscode.window.showErrorMessage(`DevTrack: ${error.message}`);
+        handleError(services, 'Error starting tracking', error);
       }
     }
   );
 
+  // Stop Tracking Command
   const stopTracking = vscode.commands.registerCommand(
     'devtrack.stopTracking',
     () => {
-      if (scheduler) {
-        scheduler.stop();
-        trackingStatusBar.text = '$(circle-slash) DevTrack: Stopped';
-        trackingStatusBar.tooltip = 'DevTrack: Tracking is stopped';
+      if (services.scheduler) {
+        services.scheduler.stop();
+        updateStatusBar(services, 'tracking', false);
         vscode.window.showInformationMessage('DevTrack: Tracking stopped.');
-        outputChannel.appendLine('DevTrack: Tracking stopped manually.');
+        services.outputChannel.appendLine(
+          'DevTrack: Tracking stopped manually.'
+        );
       } else {
         vscode.window.showErrorMessage(
           'DevTrack: Please connect to GitHub first.'
         );
-        outputChannel.appendLine('DevTrack: Scheduler is not initialized.');
+        services.outputChannel.appendLine(
+          'DevTrack: Scheduler is not initialized.'
+        );
       }
     }
   );
 
+  // Login Command
   const loginCommand = vscode.commands.registerCommand(
     'devtrack.login',
     async () => {
       try {
-        githubService.setToken('');
-        session = await auth.getSession('github', ['repo', 'read:user'], {
-          forceNewSession: true,
-        });
+        services.githubService.setToken('');
+        const session = await vscode.authentication.getSession(
+          'github',
+          ['repo', 'read:user', 'user:email'],
+          { forceNewSession: true }
+        );
 
         if (session) {
-          await initializeDevTrack();
+          await initializeDevTrack(services);
         } else {
-          outputChannel.appendLine('DevTrack: GitHub connection canceled.');
+          services.outputChannel.appendLine(
+            'DevTrack: GitHub connection canceled.'
+          );
+          vscode.window.showInformationMessage(
+            'DevTrack: GitHub connection was canceled.'
+          );
         }
       } catch (error: any) {
-        outputChannel.appendLine(
-          `DevTrack: GitHub connection failed. ${error}`
-        );
-        vscode.window.showErrorMessage('DevTrack: GitHub connection failed.');
+        handleError(services, 'GitHub connection failed', error);
       }
     }
   );
 
-  const logoutCommand = vscode.commands.registerCommand(
-    'devtrack.logout',
-    handleLogout
+  // Logout Command
+  const logoutCommand = vscode.commands.registerCommand('devtrack.logout', () =>
+    handleLogout(services)
   );
 
-  // Add commands to subscriptions
+  // Add to subscriptions
   context.subscriptions.push(
     startTracking,
     stopTracking,
     loginCommand,
     logoutCommand
   );
+}
 
-  // Show welcome message for first-time users
-  if (!context.globalState.get('devtrackWelcomeShown')) {
-    showWelcomeInfo(outputChannel);
-    context.globalState.update('devtrackWelcomeShown', true);
+async function initializeDevTrack(services: DevTrackServices) {
+  try {
+    services.outputChannel.appendLine('DevTrack: Starting initialization...');
+
+    // Verify Git installation
+    if (
+      !(await GitInstallationHandler.checkGitInstallation(
+        services.outputChannel
+      ))
+    ) {
+      throw new Error(
+        'Git must be installed before DevTrack can be initialized.'
+      );
+    }
+
+    // Get GitHub authentication
+    const session = await vscode.authentication.getSession(
+      'github',
+      ['repo', 'read:user', 'user:email'],
+      { forceNewSession: true }
+    );
+
+    if (!session) {
+      throw new Error('GitHub authentication is required to use DevTrack.');
+    }
+
+    // Initialize GitHub service
+    services.githubService.setToken(session.accessToken);
+    const username = await services.githubService.getUsername();
+
+    if (!username) {
+      throw new Error(
+        'Unable to retrieve GitHub username. Please try logging in again.'
+      );
+    }
+
+    // Setup repository
+    const config = vscode.workspace.getConfiguration('devtrack');
+    const repoName = config.get<string>('repoName') || 'code-tracking';
+    const remoteUrl = `https://github.com/${username}/${repoName}.git`;
+
+    await setupRepository(services, repoName, remoteUrl);
+    await initializeTracker(services);
+
+    updateStatusBar(services, 'auth', true);
+    updateStatusBar(services, 'tracking', true);
+
+    services.outputChannel.appendLine(
+      'DevTrack: Initialization completed successfully.'
+    );
+    vscode.window.showInformationMessage(
+      'DevTrack has been set up successfully and tracking has started.'
+    );
+  } catch (error: any) {
+    handleError(services, 'Initialization failed', error);
+    throw error;
+  }
+}
+
+async function setupRepository(
+  services: DevTrackServices,
+  repoName: string,
+  remoteUrl: string
+) {
+  const repoExists = await services.githubService.repoExists(repoName);
+
+  if (!repoExists) {
+    const createdRepoUrl = await services.githubService.createRepo(repoName);
+    if (!createdRepoUrl) {
+      throw new Error(
+        'Failed to create GitHub repository. Please check your permissions.'
+      );
+    }
+    services.outputChannel.appendLine(
+      `DevTrack: Created new repository at ${remoteUrl}`
+    );
   }
 
-  // Handle Configuration Changes
-  vscode.workspace.onDidChangeConfiguration(async (event) => {
+  await services.gitService.initializeRepo(remoteUrl);
+}
+
+async function initializeTracker(services: DevTrackServices) {
+  const config = vscode.workspace.getConfiguration('devtrack');
+  const commitFrequency = config.get<number>('commitFrequency') || 30;
+
+  services.scheduler = new Scheduler(
+    commitFrequency,
+    services.tracker,
+    services.summaryGenerator,
+    services.gitService,
+    services.outputChannel
+  );
+  services.scheduler.start();
+}
+
+async function handleLogout(services: DevTrackServices) {
+  const confirm = await vscode.window.showWarningMessage(
+    'Are you sure you want to logout from DevTrack?',
+    { modal: true },
+    'Yes',
+    'No'
+  );
+
+  if (confirm !== 'Yes') {
+    services.outputChannel.appendLine('DevTrack: Logout canceled by user.');
+    return;
+  }
+
+  cleanup(services);
+
+  const loginChoice = await vscode.window.showInformationMessage(
+    'DevTrack: Successfully logged out. Would you like to log in with a different account?',
+    'Yes',
+    'No'
+  );
+
+  if (loginChoice === 'Yes') {
+    vscode.commands.executeCommand('devtrack.login');
+  }
+}
+
+function cleanup(services: DevTrackServices) {
+  services.githubService.setToken('');
+  updateStatusBar(services, 'auth', false);
+  updateStatusBar(services, 'tracking', false);
+
+  if (services.scheduler) {
+    services.scheduler.stop();
+    services.scheduler = null;
+  }
+
+  services.outputChannel.appendLine('DevTrack: Cleaned up services.');
+}
+
+function updateStatusBar(
+  services: DevTrackServices,
+  type: 'tracking' | 'auth',
+  active: boolean
+) {
+  const { trackingStatusBar, authStatusBar } = services;
+
+  if (type === 'tracking') {
+    trackingStatusBar.text = active
+      ? '$(clock) DevTrack: Tracking'
+      : '$(circle-slash) DevTrack: Stopped';
+    trackingStatusBar.tooltip = active
+      ? 'DevTrack: Tracking your coding activity is active'
+      : 'DevTrack: Tracking is stopped';
+  } else {
+    authStatusBar.text = active
+      ? '$(check) DevTrack: Connected'
+      : '$(mark-github) DevTrack: Not Connected';
+    authStatusBar.tooltip = active
+      ? 'DevTrack is connected to GitHub'
+      : 'DevTrack Status';
+  }
+}
+
+function handleError(
+  services: DevTrackServices,
+  context: string,
+  error: Error
+) {
+  const message = error.message || 'An unknown error occurred';
+  services.outputChannel.appendLine(`DevTrack: ${context} - ${message}`);
+  vscode.window.showErrorMessage(`DevTrack: ${message}`);
+}
+
+async function ensureGitHubAuth(services: DevTrackServices): Promise<boolean> {
+  try {
+    const session = await vscode.authentication.getSession('github', [
+      'repo',
+      'read:user',
+      'user:email',
+    ]);
+    return !!session;
+  } catch {
+    const response = await vscode.window.showErrorMessage(
+      'DevTrack requires GitHub authentication. Would you like to sign in now?',
+      'Sign in to GitHub',
+      'Cancel'
+    );
+
+    if (response === 'Sign in to GitHub') {
+      await vscode.commands.executeCommand('devtrack.login');
+    }
+    return false;
+  }
+}
+
+function setupConfigurationHandling(services: DevTrackServices) {
+  vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration('devtrack')) {
-      const newConfig = vscode.workspace.getConfiguration('devtrack');
-      const newRepoName = newConfig.get<string>('repoName') || 'code-tracking';
-      const newCommitFrequency = newConfig.get<number>('commitFrequency') || 30;
-      const newExcludePatterns = newConfig.get<string[]>('exclude') || [];
-
-      outputChannel.appendLine('DevTrack: Configuration updated.');
-
-      if (scheduler && newCommitFrequency !== commitFrequency) {
-        scheduler.updateFrequency(newCommitFrequency);
-        outputChannel.appendLine(
-          `DevTrack: Commit frequency updated to ${newCommitFrequency} minutes.`
-        );
-      }
-
-      if (
-        tracker &&
-        JSON.stringify(newExcludePatterns) !== JSON.stringify(excludePatterns)
-      ) {
-        tracker.updateExcludePatterns(newExcludePatterns);
-        outputChannel.appendLine('DevTrack: Exclude patterns updated.');
-      }
-
-      if (newRepoName !== repoName) {
-        vscode.window.showWarningMessage(
-          'DevTrack: Repository name changed. Please restart the extension to apply changes.'
-        );
-        outputChannel.appendLine('DevTrack: Repository name changed.');
-      }
+      handleConfigurationChange(services);
     }
   });
 }
 
-/**
- * This method is called when the extension is deactivated.
- */
-export function deactivate() {}
+async function handleConfigurationChange(services: DevTrackServices) {
+  const config = vscode.workspace.getConfiguration('devtrack');
+
+  if (services.scheduler) {
+    const newFrequency = config.get<number>('commitFrequency') || 30;
+    services.scheduler.updateFrequency(newFrequency);
+    services.outputChannel.appendLine(
+      `DevTrack: Commit frequency updated to ${newFrequency} minutes.`
+    );
+  }
+
+  const newExcludePatterns = config.get<string[]>('exclude') || [];
+  services.tracker.updateExcludePatterns(newExcludePatterns);
+  services.outputChannel.appendLine('DevTrack: Configuration updated.');
+}
+
+function showWelcomeMessage(
+  context: vscode.ExtensionContext,
+  services: DevTrackServices
+) {
+  if (!context.globalState.get('devtrackWelcomeShown')) {
+    showWelcomeInfo(services.outputChannel);
+    context.globalState.update('devtrackWelcomeShown', true);
+  }
+}
+
+export function deactivate() {
+  // Cleanup will be handled by VS Code's disposal of subscriptions
+}
