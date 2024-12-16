@@ -18,6 +18,7 @@ interface DevTrackServices {
   scheduler: Scheduler | null;
   trackingStatusBar: vscode.StatusBarItem;
   authStatusBar: vscode.StatusBarItem;
+  extensionContext: vscode.ExtensionContext;
 }
 
 // Git installation handling
@@ -157,6 +158,7 @@ After installation:
         `;
   }
 }
+
 function showWelcomeInfo(outputChannel: vscode.OutputChannel) {
   const message =
     'Welcome to DevTrack! Would you like to set up automatic code tracking?';
@@ -209,6 +211,12 @@ export async function activate(context: vscode.ExtensionContext) {
   showWelcomeMessage(context, services);
 }
 
+interface PersistedAuthState {
+  username?: string;
+  repoName?: string;
+  lastWorkspace?: string;
+}
+
 async function initializeServices(
   context: vscode.ExtensionContext
 ): Promise<DevTrackServices | null> {
@@ -226,6 +234,7 @@ async function initializeServices(
     scheduler: null,
     trackingStatusBar: createStatusBarItem('tracking'),
     authStatusBar: createStatusBarItem('auth'),
+    extensionContext: context,
   };
 
   // Add status bars to subscriptions
@@ -233,6 +242,60 @@ async function initializeServices(
     services.trackingStatusBar,
     services.authStatusBar
   );
+
+  // Try to restore previous session
+  try {
+    const session = await vscode.authentication.getSession(
+      'github',
+      ['repo', 'read:user'],
+      {
+        createIfNone: false,
+      }
+    );
+
+    if (session) {
+      // Get persisted state
+      const persistedState =
+        context.globalState.get<PersistedAuthState>('devtrackAuthState');
+      const currentWorkspace =
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+      if (persistedState?.username && currentWorkspace) {
+        services.githubService.setToken(session.accessToken);
+        const username = await services.githubService.getUsername();
+
+        if (username === persistedState.username) {
+          // Re-initialize with persisted settings
+          const config = vscode.workspace.getConfiguration('devtrack');
+          const repoName =
+            config.get<string>('repoName') ||
+            persistedState.repoName ||
+            'code-tracking';
+          const remoteUrl = `https://github.com/${username}/${repoName}.git`;
+
+          await setupRepository(services, repoName, remoteUrl);
+          await initializeTracker(services);
+
+          updateStatusBar(services, 'auth', true);
+          updateStatusBar(services, 'tracking', true);
+
+          // Update persisted state
+          await context.globalState.update('devtrackAuthState', {
+            username,
+            repoName,
+            lastWorkspace: currentWorkspace,
+          });
+
+          outputChannel.appendLine(
+            'DevTrack: Successfully restored previous session'
+          );
+        }
+      }
+    }
+  } catch (error) {
+    outputChannel.appendLine(`DevTrack: Error restoring session - ${error}`);
+    // Continue with normal initialization if restoration fails
+  }
 
   // Load and validate configuration
   if (!(await loadConfiguration(services))) {
@@ -396,6 +459,19 @@ async function registerCommands(
   );
 }
 
+// Update the interface to include extensionContext
+interface DevTrackServices {
+  outputChannel: vscode.OutputChannel;
+  githubService: GitHubService;
+  gitService: GitService;
+  tracker: Tracker;
+  summaryGenerator: SummaryGenerator;
+  scheduler: Scheduler | null;
+  trackingStatusBar: vscode.StatusBarItem;
+  authStatusBar: vscode.StatusBarItem;
+  extensionContext: vscode.ExtensionContext;
+}
+
 async function initializeDevTrack(services: DevTrackServices) {
   try {
     services.outputChannel.appendLine('DevTrack: Starting initialization...');
@@ -415,7 +491,7 @@ async function initializeDevTrack(services: DevTrackServices) {
     const session = await vscode.authentication.getSession(
       'github',
       ['repo', 'read:user', 'user:email'],
-      { forceNewSession: true }
+      { createIfNone: true }
     );
 
     if (!session) {
@@ -439,6 +515,13 @@ async function initializeDevTrack(services: DevTrackServices) {
 
     await setupRepository(services, repoName, remoteUrl);
     await initializeTracker(services);
+
+    // Persist authentication state using the context from services
+    await services.extensionContext.globalState.update('devtrackAuthState', {
+      username,
+      repoName,
+      lastWorkspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    });
 
     updateStatusBar(services, 'auth', true);
     updateStatusBar(services, 'tracking', true);
