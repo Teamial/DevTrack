@@ -636,12 +636,21 @@ async function initializeDevTrack(services: DevTrackServices) {
   try {
     services.outputChannel.appendLine('DevTrack: Starting initialization...');
 
-    // Verify Git installation
+    // Verify Git installation with improved error handling
     if (
       !(await GitInstallationHandler.checkGitInstallation(
         services.outputChannel
       ))
     ) {
+      const response = await vscode.window.showErrorMessage(
+        'DevTrack requires Git to be installed and properly configured. Would you like to see the installation guide?',
+        'Show Guide',
+        'Cancel'
+      );
+
+      if (response === 'Show Guide') {
+        await vscode.commands.executeCommand('devtrack.showGitGuide');
+      }
       throw new Error(
         'Git must be installed before DevTrack can be initialized.'
       );
@@ -651,7 +660,7 @@ async function initializeDevTrack(services: DevTrackServices) {
     const session = await vscode.authentication.getSession(
       'github',
       ['repo', 'read:user', 'user:email'],
-      { createIfNone: true }
+      { createIfNone: true, clearSessionPreference: true }
     );
 
     if (!session) {
@@ -659,39 +668,49 @@ async function initializeDevTrack(services: DevTrackServices) {
     }
 
     // Initialize GitHub service
-    services.githubService.setToken(session.accessToken);
-    const username = await services.githubService.getUsername();
+    try {
+      services.githubService.setToken(session.accessToken);
+      const username = await services.githubService.getUsername();
 
-    if (!username) {
-      throw new Error(
-        'Unable to retrieve GitHub username. Please try logging in again.'
+      if (!username) {
+        throw new Error(
+          'Unable to retrieve GitHub username. Please try logging in again.'
+        );
+      }
+
+      // Setup repository
+      const config = vscode.workspace.getConfiguration('devtrack');
+      const repoName = config.get<string>('repoName') || 'code-tracking';
+      const remoteUrl = `https://github.com/${username}/${repoName}.git`;
+
+      await setupRepository(services, repoName, remoteUrl);
+      await initializeTracker(services);
+
+      // Persist authentication state using the context from services
+      await services.extensionContext.globalState.update('devtrackAuthState', {
+        username,
+        repoName,
+        lastWorkspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      });
+
+      updateStatusBar(services, 'auth', true);
+      updateStatusBar(services, 'tracking', true);
+
+      services.outputChannel.appendLine(
+        'DevTrack: Initialization completed successfully.'
       );
+      vscode.window.showInformationMessage(
+        'DevTrack has been set up successfully and tracking has started.'
+      );
+    } catch (error: any) {
+      if (error.message.includes('git')) {
+        // Show more helpful error message for Git-related issues
+        throw new Error(
+          'There was an issue with Git configuration. Please ensure Git is properly installed and try again.'
+        );
+      }
+      throw error;
     }
-
-    // Setup repository
-    const config = vscode.workspace.getConfiguration('devtrack');
-    const repoName = config.get<string>('repoName') || 'code-tracking';
-    const remoteUrl = `https://github.com/${username}/${repoName}.git`;
-
-    await setupRepository(services, repoName, remoteUrl);
-    await initializeTracker(services);
-
-    // Persist authentication state using the context from services
-    await services.extensionContext.globalState.update('devtrackAuthState', {
-      username,
-      repoName,
-      lastWorkspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-    });
-
-    updateStatusBar(services, 'auth', true);
-    updateStatusBar(services, 'tracking', true);
-
-    services.outputChannel.appendLine(
-      'DevTrack: Initialization completed successfully.'
-    );
-    vscode.window.showInformationMessage(
-      'DevTrack has been set up successfully and tracking has started.'
-    );
   } catch (error: any) {
     handleError(services, 'Initialization failed', error);
     throw error;

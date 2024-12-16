@@ -8,6 +8,7 @@ import { OutputChannel } from 'vscode';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { execSync } from 'child_process';
+import * as fs from 'fs';
 
 const execAsync = promisify(exec);
 
@@ -18,54 +19,15 @@ export class GitService extends EventEmitter {
   private operationQueue: Promise<any> = Promise.resolve();
   private static MAX_RETRIES = 3;
   private static RETRY_DELAY = 1000;
+  private isWindows: boolean;
 
   constructor(outputChannel: OutputChannel) {
     super();
     this.outputChannel = outputChannel;
+    this.isWindows = process.platform === 'win32';
 
     this.initializeWorkspace();
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-      vscode.window.showErrorMessage(
-        'DevTrack: No workspace folder is open. Please open a folder to start tracking.'
-      );
-      return;
-    }
-
-    const workspaceFolder = workspaceFolders[0].uri.fsPath;
-    this.repoPath = workspaceFolder;
-
-    if (!path.isAbsolute(this.repoPath)) {
-      vscode.window.showErrorMessage(
-        'DevTrack: The repository path is not absolute.'
-      );
-      return;
-    }
-
-    // Initialize Git with custom configuration
-    try {
-      const gitPath = this.findGitExecutable();
-      this.git = simpleGit(this.repoPath, {
-        binary: gitPath,
-        maxConcurrentProcesses: 1,
-        timeout: {
-          block: 10000,
-        },
-      });
-
-      this.initGitConfig().catch((error) => {
-        this.outputChannel.appendLine(
-          `DevTrack: Git config initialization error - ${error}`
-        );
-      });
-    } catch (error) {
-      // Log error but don't throw - allows extension to still function for auth
-      this.outputChannel.appendLine(
-        `DevTrack: Git initialization error - ${error}`
-      );
-    }
   }
-
   private initializeWorkspace(): void {
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -74,8 +36,7 @@ export class GitService extends EventEmitter {
         return;
       }
 
-      const workspaceFolder = workspaceFolders[0].uri.fsPath;
-      this.repoPath = workspaceFolder;
+      this.repoPath = workspaceFolders[0].uri.fsPath;
 
       if (!path.isAbsolute(this.repoPath)) {
         this.outputChannel.appendLine(
@@ -84,14 +45,14 @@ export class GitService extends EventEmitter {
         return;
       }
 
-      // Initialize Git with modified configuration
       const gitPath = this.findGitExecutable();
-      this.git = simpleGit(this.repoPath, {
+
+      this.git = simpleGit({
+        baseDir: this.repoPath,
         binary: gitPath,
         maxConcurrentProcesses: 1,
-        timeout: {
-          block: 10000,
-        },
+        trimmed: false,
+        config: [],
       });
 
       this.initGitConfig().catch((error) => {
@@ -107,75 +68,60 @@ export class GitService extends EventEmitter {
   }
 
   private findGitExecutable(): string {
-    const platform = process.platform;
-    let gitPath: string | null = null;
-
     try {
-      if (platform === 'win32') {
-        // Enhanced Windows Git path detection
-        const programFiles = process.env.PROGRAMFILES || '';
-        const localAppData = process.env.LOCALAPPDATA || '';
-
-        const possiblePaths = [
+      if (this.isWindows) {
+        const commonPaths = [
           'C:\\Program Files\\Git\\cmd\\git.exe',
           'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
-          path.join(programFiles, 'Git\\cmd\\git.exe'),
-          path.join(localAppData, 'Programs\\Git\\cmd\\git.exe'),
         ];
 
-        // Add PATH entries if they exist
-        const pathEntries = process.env.PATH?.split(';') || [];
-        const pathGitExecutables = pathEntries
-          .map((entry) => path.join(entry, 'git.exe'))
-          .filter(Boolean);
-
-        // Combine all possible paths
-        const allPaths = [...possiblePaths, ...pathGitExecutables];
-
-        // Try each path
-        for (const testPath of allPaths) {
-          try {
-            execSync(`"${testPath}" --version`, { stdio: 'ignore' });
-            gitPath = testPath;
-            break;
-          } catch {
-            continue;
+        for (const gitPath of commonPaths) {
+          if (fs.existsSync(gitPath)) {
+            return gitPath;
           }
         }
-      } else {
-        // Unix-like systems
+
+        // Fallback to using PATH
         try {
-          gitPath = execSync('which git', { stdio: 'pipe' }).toString().trim();
-        } catch {
-          // Fallback to common Unix paths
-          const unixPaths = ['/usr/bin/git', '/usr/local/bin/git'];
-          for (const testPath of unixPaths) {
-            try {
-              execSync(`"${testPath}" --version`, { stdio: 'ignore' });
-              gitPath = testPath;
-              break;
-            } catch {
-              continue;
-            }
+          const gitPathFromEnv = execSync('where git', { encoding: 'utf8' })
+            .split('\n')[0]
+            .trim();
+          if (gitPathFromEnv) {
+            return gitPathFromEnv;
           }
+        } catch (error) {
+          this.outputChannel.appendLine('DevTrack: Git not found in PATH');
+        }
+
+        return 'git'; // Last resort fallback
+      } else {
+        try {
+          return execSync('which git', { encoding: 'utf8' }).trim();
+        } catch {
+          return 'git';
         }
       }
-
-      if (!gitPath) {
-        this.outputChannel.appendLine(
-          'DevTrack: Git executable not found in common locations'
-        );
-        // Return 'git' as fallback - let simple-git handle it
-        return 'git';
-      }
-
-      return gitPath;
     } catch (error) {
       this.outputChannel.appendLine(
         `DevTrack: Error finding Git executable - ${error}`
       );
-      // Return 'git' as fallback - let simple-git handle it
       return 'git';
+    }
+  }
+
+  private async cleanupGitLocks() {
+    try {
+      const gitDir = path.join(this.repoPath, '.git');
+      const lockFiles = ['index.lock', 'HEAD.lock'];
+
+      for (const lockFile of lockFiles) {
+        const lockPath = path.join(gitDir, lockFile);
+        await execAsync(`rm -f "${lockPath}"`);
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error cleaning up Git locks: ${error}`
+      );
     }
   }
 
@@ -218,22 +164,6 @@ export class GitService extends EventEmitter {
     }
 
     throw lastError;
-  }
-
-  private async cleanupGitLocks() {
-    try {
-      const gitDir = path.join(this.repoPath, '.git');
-      const lockFiles = ['index.lock', 'HEAD.lock'];
-
-      for (const lockFile of lockFiles) {
-        const lockPath = path.join(gitDir, lockFile);
-        await execAsync(`rm -f "${lockPath}"`);
-      }
-    } catch (error) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error cleaning up Git locks: ${error}`
-      );
-    }
   }
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
