@@ -74,6 +74,26 @@ DevTrack is a productivity tool designed to seamlessly track and log your coding
 Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/DevTrack/pulls) to add your example!
 
 ---
+## Windows Installation Guide
+
+If you're using Windows, please follow these steps to ensure DevTrack works correctly:
+
+1. Install Git for Windows
+   - Download Git from https://git-scm.com/download/windows
+   - During installation:
+     - Select "Use Git from the Command Line and also from 3rd-party software"
+     - Choose "Use Windows' default console window"
+     - Select "Enable Git Credential Manager"
+     - All other options can remain default
+
+2. Configure Git (Run in Command Prompt or PowerShell)
+   ```powershell
+   git config --global core.autocrlf true
+   git config --global core.safecrlf false
+   git config --global core.longpaths true
+
+3. Continue the steps in Getting Started
+---
 ## Preview Example
 
 ![Project Tracking Example](https://github.com/user-attachments/assets/eeab8b20-203d-441c-af2e-969c6cdeb980)
