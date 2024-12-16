@@ -7,13 +7,13 @@ import { EventEmitter } from 'events';
 import { OutputChannel } from 'vscode';
 import { promisify } from 'util';
 import { exec } from 'child_process';
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 
 const execAsync = promisify(exec);
 
 export class GitService extends EventEmitter {
-  private git: SimpleGit;
-  private repoPath: string;
+  private git!: SimpleGit;
+  private repoPath!: string;
   private outputChannel: OutputChannel;
   private operationQueue: Promise<any> = Promise.resolve();
   private static MAX_RETRIES = 3;
@@ -23,12 +23,13 @@ export class GitService extends EventEmitter {
     super();
     this.outputChannel = outputChannel;
 
+    this.initializeWorkspace();
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
       vscode.window.showErrorMessage(
         'DevTrack: No workspace folder is open. Please open a folder to start tracking.'
       );
-      throw new Error('No workspace folder open.');
+      return;
     }
 
     const workspaceFolder = workspaceFolders[0].uri.fsPath;
@@ -38,20 +39,71 @@ export class GitService extends EventEmitter {
       vscode.window.showErrorMessage(
         'DevTrack: The repository path is not absolute.'
       );
-      throw new Error('Invalid repository path.');
+      return;
     }
 
     // Initialize Git with custom configuration
-    this.git = simpleGit(this.repoPath, {
-      binary: this.findGitExecutable(),
-      maxConcurrentProcesses: 1,
-      timeout: {
-        block: 10000,
-      },
-    });
+    try {
+      const gitPath = this.findGitExecutable();
+      this.git = simpleGit(this.repoPath, {
+        binary: gitPath,
+        maxConcurrentProcesses: 1,
+        timeout: {
+          block: 10000,
+        },
+      });
 
-    // Configure Git to handle large repositories
-    this.initGitConfig();
+      this.initGitConfig().catch((error) => {
+        this.outputChannel.appendLine(
+          `DevTrack: Git config initialization error - ${error}`
+        );
+      });
+    } catch (error) {
+      // Log error but don't throw - allows extension to still function for auth
+      this.outputChannel.appendLine(
+        `DevTrack: Git initialization error - ${error}`
+      );
+    }
+  }
+
+  private initializeWorkspace(): void {
+    try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        this.outputChannel.appendLine('DevTrack: No workspace folder is open.');
+        return;
+      }
+
+      const workspaceFolder = workspaceFolders[0].uri.fsPath;
+      this.repoPath = workspaceFolder;
+
+      if (!path.isAbsolute(this.repoPath)) {
+        this.outputChannel.appendLine(
+          'DevTrack: The repository path is not absolute.'
+        );
+        return;
+      }
+
+      // Initialize Git with modified configuration
+      const gitPath = this.findGitExecutable();
+      this.git = simpleGit(this.repoPath, {
+        binary: gitPath,
+        maxConcurrentProcesses: 1,
+        timeout: {
+          block: 10000,
+        },
+      });
+
+      this.initGitConfig().catch((error) => {
+        this.outputChannel.appendLine(
+          `DevTrack: Git config initialization error - ${error}`
+        );
+      });
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Workspace initialization error - ${error}`
+      );
+    }
   }
 
   private findGitExecutable(): string {
@@ -60,73 +112,77 @@ export class GitService extends EventEmitter {
 
     try {
       if (platform === 'win32') {
-        // Check common Windows Git installation paths
+        // Enhanced Windows Git path detection
+        const programFiles = process.env.PROGRAMFILES || '';
+        const localAppData = process.env.LOCALAPPDATA || '';
+
         const possiblePaths = [
           'C:\\Program Files\\Git\\cmd\\git.exe',
           'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
-          process.env.PROGRAMFILES + '\\Git\\cmd\\git.exe',
-          process.env.LOCALAPPDATA + '\\Programs\\Git\\cmd\\git.exe',
+          path.join(programFiles, 'Git\\cmd\\git.exe'),
+          path.join(localAppData, 'Programs\\Git\\cmd\\git.exe'),
         ];
 
-        for (const path of possiblePaths) {
+        // Add PATH entries if they exist
+        const pathEntries = process.env.PATH?.split(';') || [];
+        const pathGitExecutables = pathEntries
+          .map((entry) => path.join(entry, 'git.exe'))
+          .filter(Boolean);
+
+        // Combine all possible paths
+        const allPaths = [...possiblePaths, ...pathGitExecutables];
+
+        // Try each path
+        for (const testPath of allPaths) {
           try {
-            execSync(`"${path}" --version`);
-            gitPath = path;
+            execSync(`"${testPath}" --version`, { stdio: 'ignore' });
+            gitPath = testPath;
             break;
-          } catch (e) {
-            // Continue checking other paths
+          } catch {
+            continue;
           }
         }
       } else {
-        // On Unix-like systems, try to find git in PATH
-        gitPath = execSync('which git').toString().trim();
+        // Unix-like systems
+        try {
+          gitPath = execSync('which git', { stdio: 'pipe' }).toString().trim();
+        } catch {
+          // Fallback to common Unix paths
+          const unixPaths = ['/usr/bin/git', '/usr/local/bin/git'];
+          for (const testPath of unixPaths) {
+            try {
+              execSync(`"${testPath}" --version`, { stdio: 'ignore' });
+              gitPath = testPath;
+              break;
+            } catch {
+              continue;
+            }
+          }
+        }
       }
 
       if (!gitPath) {
-        throw new Error('Git executable not found');
+        this.outputChannel.appendLine(
+          'DevTrack: Git executable not found in common locations'
+        );
+        // Return 'git' as fallback - let simple-git handle it
+        return 'git';
       }
 
-      execSync(`"${gitPath}" --version`);
-      this.outputChannel.appendLine(`DevTrack: Found Git at ${gitPath}`);
       return gitPath;
     } catch (error) {
       this.outputChannel.appendLine(
         `DevTrack: Error finding Git executable - ${error}`
       );
-      throw new Error('Git is not properly installed or not in PATH');
+      // Return 'git' as fallback - let simple-git handle it
+      return 'git';
     }
   }
 
-  private async verifyGitAccess(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const gitProcess = spawn(this.findGitExecutable(), ['--version']);
-
-      gitProcess.on('error', (error) => {
-        this.outputChannel.appendLine(
-          `DevTrack: Git access verification failed - ${error.message}`
-        );
-        reject(
-          new Error(
-            'Git is not accessible. Please ensure Git is installed and in your PATH.'
-          )
-        );
-      });
-
-      gitProcess.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(
-            new Error(
-              'Git verification failed. Please check your Git installation.'
-            )
-          );
-        }
-      });
-    });
-  }
-
   private async initGitConfig() {
+    if (!this.git) {
+      return;
+    }
     try {
       await this.git.addConfig('core.compression', '0');
       await this.git.addConfig('http.postBuffer', '524288000');
@@ -193,8 +249,13 @@ export class GitService extends EventEmitter {
   async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
-        await this.verifyGitAccess();
+        await this.verifyGit();
         const isRepo = await this.git.checkIsRepo();
+        if (!(await this.verifyGit())) {
+          this.outputChannel.appendLine(
+            'DevTrack: Git is not properly installed or accessible'
+          );
+        }
         if (!isRepo) {
           await this.git.init();
           this.outputChannel.appendLine(
@@ -268,15 +329,40 @@ export class GitService extends EventEmitter {
     });
   }
 
+  private async verifyGit(): Promise<boolean> {
+    try {
+      const gitPath = this.findGitExecutable();
+      return new Promise((resolve) => {
+        const gitProcess = require('child_process').spawn(gitPath, [
+          '--version',
+        ]);
+
+        gitProcess.on('error', () => {
+          resolve(false);
+        });
+
+        gitProcess.on('close', (code: number) => {
+          resolve(code === 0);
+        });
+      });
+    } catch (error) {
+      return false;
+    }
+  }
+
   private handleGitError(error: any): void {
     let errorMessage = 'Git operation failed';
 
     if (error.message?.includes('ENOENT')) {
       errorMessage =
-        'Git is not accessible. Please ensure Git is installed and in your PATH.';
+        process.platform === 'win32'
+          ? 'Git not found. Please install Git for Windows from https://git-scm.com/download/win'
+          : 'Git is not accessible. Please ensure Git is installed.';
     } else if (error.message?.includes('spawn git ENOENT')) {
       errorMessage =
-        'Failed to spawn Git process. Please verify your Git installation.';
+        process.platform === 'win32'
+          ? 'Git not found in PATH. Please restart VS Code after installing Git.'
+          : 'Failed to spawn Git process. Please verify your Git installation.';
     } else if (error.message?.includes('not a git repository')) {
       errorMessage =
         'Not a Git repository. Please initialize the repository first.';
