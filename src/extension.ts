@@ -8,19 +8,6 @@ import { SummaryGenerator } from './services/summaryGenerator';
 import { Scheduler } from './services/scheduler';
 import { execSync } from 'child_process';
 
-// Interface for services
-interface DevTrackServices {
-  outputChannel: vscode.OutputChannel;
-  githubService: GitHubService;
-  gitService: GitService;
-  tracker: Tracker;
-  summaryGenerator: SummaryGenerator;
-  scheduler: Scheduler | null;
-  trackingStatusBar: vscode.StatusBarItem;
-  authStatusBar: vscode.StatusBarItem;
-  extensionContext: vscode.ExtensionContext;
-}
-
 // Git installation handling
 class GitInstallationHandler {
   private static readonly DOWNLOAD_URLS = {
@@ -37,17 +24,139 @@ class GitInstallationHandler {
       outputChannel.appendLine(`DevTrack: Git found - ${gitVersion.trim()}`);
       return true;
     } catch (error) {
+      const platform = process.platform;
       const response = await vscode.window.showErrorMessage(
-        'Git is required but not found on your system. Would you like to view the installation guide?',
-        'Show Installation Guide',
-        'Cancel'
+        'Git is required but not found on your system. This might be because Git is not installed or not in your system PATH.',
+        {
+          modal: true,
+          detail:
+            'Would you like to view the installation guide or fix PATH issues?',
+        },
+        ...(platform === 'win32'
+          ? ['Show Installation Guide', 'Fix PATH Issue', 'Cancel']
+          : ['Show Installation Guide', 'Cancel'])
       );
 
       if (response === 'Show Installation Guide') {
         this.showInstallationGuide();
+      } else if (response === 'Fix PATH Issue') {
+        this.showPathFixGuide();
       }
       return false;
     }
+  }
+
+  private static showPathFixGuide() {
+    const panel = vscode.window.createWebviewPanel(
+      'gitPathGuide',
+      'Fix Git PATH Issue',
+      vscode.ViewColumn.One,
+      { enableScripts: true }
+    );
+
+    const content = `<!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { 
+                padding: 20px; 
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                line-height: 1.6;
+            }
+            .step {
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f3f3f3;
+                border-radius: 5px;
+            }
+            .warning {
+                color: #856404;
+                background-color: #fff3cd;
+                border: 1px solid #ffeeba;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+            }
+            .tip {
+                color: #004085;
+                background-color: #cce5ff;
+                border: 1px solid #b8daff;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+            }
+            img {
+                max-width: 100%;
+                margin: 10px 0;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Adding Git to System PATH</h1>
+        
+        <div class="warning">
+            ⚠️ Before proceeding, make sure Git is installed on your system. If not, please install it first.
+        </div>
+
+        <div class="step">
+            <h3>Step 1: Open System Properties</h3>
+            <ul>
+                <li>Press <strong>Windows + R</strong> to open Run dialog</li>
+                <li>Type <strong>sysdm.cpl</strong> and press Enter</li>
+                <li>Go to the <strong>Advanced</strong> tab</li>
+                <li>Click <strong>Environment Variables</strong> at the bottom</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h3>Step 2: Edit PATH Variable</h3>
+            <ul>
+                <li>Under <strong>System Variables</strong>, find and select <strong>Path</strong></li>
+                <li>Click <strong>Edit</strong></li>
+                <li>Click <strong>New</strong></li>
+                <li>Add the following paths (if they don't already exist):
+                    <ul>
+                        <li>C:\\Program Files\\Git\\cmd</li>
+                        <li>C:\\Program Files\\Git\\bin</li>
+                        <li>C:\\Program Files (x86)\\Git\\cmd</li>
+                    </ul>
+                </li>
+                <li>Click <strong>OK</strong> on all windows</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h3>Step 3: Verify Installation</h3>
+            <ul>
+                <li>Open a <strong>new</strong> Command Prompt or PowerShell window</li>
+                <li>Type <strong>git --version</strong> and press Enter</li>
+                <li>If you see a version number, Git is successfully added to PATH</li>
+            </ul>
+        </div>
+
+        <div class="tip">
+            💡 Tip: If Git is installed in a different location, you'll need to add that path instead. 
+            Common alternative locations:
+            <ul>
+                <li>C:\\Program Files\\Git\\cmd</li>
+                <li>C:\\Users\\[YourUsername]\\AppData\\Local\\Programs\\Git\\cmd</li>
+            </ul>
+        </div>
+
+        <div class="warning">
+            Important: After updating the PATH, you need to:
+            <ol>
+                <li>Close and reopen VS Code</li>
+                <li>Close and reopen any open terminal windows</li>
+            </ol>
+        </div>
+    </body>
+    </html>`;
+
+    panel.webview.html = content;
   }
 
   static showInstallationGuide() {
@@ -67,7 +176,6 @@ class GitInstallationHandler {
   }
 
   private static getInstructions(platform: string): string {
-    // Platform-specific installation instructions
     const instructions = {
       win32: `Windows Git Installation Guide:
 1. Download Git from ${this.DOWNLOAD_URLS.win32}
@@ -76,21 +184,12 @@ class GitInstallationHandler {
    - Choose "Git from the command line and also from 3rd-party software"
    - Choose "Use Windows' default console window"
    - Choose "Enable Git Credential Manager"
-4. After installation:
-   - Open Command Prompt (cmd) or PowerShell
-   - Type 'git --version' to verify installation
-
-If Git is not recognized after installation:
-1. Open Windows Settings
-2. Search for "Environment Variables"
-3. Click "Edit the system environment variables"
-4. Click "Environment Variables"
-5. Under "System Variables", find and select "Path"
-6. Click "Edit"
-7. Click "New"
-8. Add "C:\\Program Files\\Git\\cmd"
-9. Click "OK" on all windows
-10. Restart VS Code`,
+4. Important: On the "Adjusting your PATH environment" step:
+   - Select "Git from the command line and also from 3rd-party software"
+5. Complete the installation
+6. Verify installation:
+   - Open a new Command Prompt or PowerShell
+   - Type 'git --version'`,
       darwin: `Mac Git Installation Guide:
 Option 1 - Using Homebrew (Recommended):
 1. Open Terminal
@@ -102,11 +201,7 @@ Option 1 - Using Homebrew (Recommended):
 Option 2 - Direct Download:
 1. Download Git from ${this.DOWNLOAD_URLS.darwin}
 2. Open the downloaded .dmg file
-3. Run the installer package
-
-After installation:
-- Open Terminal
-- Type 'git --version' to verify installation`,
+3. Run the installer package`,
       linux: `Linux Git Installation Guide:
 Debian/Ubuntu:
 1. Open Terminal
@@ -115,10 +210,7 @@ Debian/Ubuntu:
 
 Fedora:
 1. Open Terminal
-2. Run: sudo dnf install git
-
-After installation:
-- Type 'git --version' to verify installation`,
+2. Run: sudo dnf install git`,
     };
 
     return (
@@ -130,32 +222,57 @@ After installation:
     instructions: string,
     downloadUrl: string
   ): string {
-    return `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    body { padding: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-                    pre { white-space: pre-wrap; background-color: #f3f3f3; padding: 15px; border-radius: 5px; }
-                    .download-btn { 
-                        padding: 10px 20px; 
-                        background-color: #007acc; 
-                        color: white; 
-                        border: none; 
-                        border-radius: 5px;
-                        cursor: pointer;
-                        margin-top: 20px;
-                    }
-                    .download-btn:hover { background-color: #005999; }
-                </style>
-            </head>
-            <body>
-                <h1>Git Installation Guide</h1>
-                <pre>${instructions}</pre>
-                <button class="download-btn" onclick="window.open('${downloadUrl}')">Download Git</button>
-            </body>
-            </html>
-        `;
+    return `<!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { 
+                padding: 20px; 
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+                line-height: 1.6;
+            }
+            pre { 
+                white-space: pre-wrap; 
+                background-color: #f3f3f3; 
+                padding: 15px; 
+                border-radius: 5px; 
+            }
+            .download-btn { 
+                padding: 10px 20px; 
+                background-color: #007acc; 
+                color: white; 
+                border: none; 
+                border-radius: 5px;
+                cursor: pointer;
+                margin-top: 20px;
+                text-decoration: none;
+                display: inline-block;
+            }
+            .download-btn:hover { 
+                background-color: #005999; 
+            }
+            .tip {
+                background-color: #e8f5e9;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Git Installation Guide</h1>
+        <pre>${instructions}</pre>
+        <div class="tip">
+            <strong>Tip:</strong> After installation, if Git is not recognized:
+            <ul>
+                <li>Make sure to restart VS Code</li>
+                <li>Open a new terminal window</li>
+                <li>If still not working, you might need to add Git to your PATH</li>
+            </ul>
+        </div>
+        <a href="${downloadUrl}" class="download-btn" target="_blank">Download Git</a>
+    </body>
+    </html>`;
   }
 }
 
@@ -210,11 +327,84 @@ export async function activate(context: vscode.ExtensionContext) {
   setupConfigurationHandling(services);
   showWelcomeMessage(context, services);
 }
-
 interface PersistedAuthState {
   username?: string;
   repoName?: string;
   lastWorkspace?: string;
+}
+// Interface for services
+interface DevTrackServices {
+  outputChannel: vscode.OutputChannel;
+  githubService: GitHubService;
+  gitService: GitService;
+  tracker: Tracker;
+  summaryGenerator: SummaryGenerator;
+  scheduler: Scheduler | null;
+  trackingStatusBar: vscode.StatusBarItem;
+  authStatusBar: vscode.StatusBarItem;
+  extensionContext: vscode.ExtensionContext;
+}
+
+async function restoreAuthenticationState(
+  context: vscode.ExtensionContext,
+  services: DevTrackServices
+): Promise<boolean> {
+  try {
+    // Use getSession instead of getSessions
+    const session = await vscode.authentication.getSession(
+      'github',
+      ['repo', 'read:user'],
+      {
+        createIfNone: false,
+        silent: true, // Try to get session without prompting user
+      }
+    );
+
+    if (session) {
+      services.githubService.setToken(session.accessToken);
+      const username = await services.githubService.getUsername();
+
+      if (username) {
+        // Get persisted state
+        const persistedState =
+          context.globalState.get<PersistedAuthState>('devtrackAuthState');
+        const currentWorkspace =
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+        // Initialize with persisted or default settings
+        const config = vscode.workspace.getConfiguration('devtrack');
+        const repoName =
+          config.get<string>('repoName') ||
+          persistedState?.repoName ||
+          'code-tracking';
+        const remoteUrl = `https://github.com/${username}/${repoName}.git`;
+
+        await setupRepository(services, repoName, remoteUrl);
+        await initializeTracker(services);
+
+        // Update UI
+        updateStatusBar(services, 'auth', true);
+        updateStatusBar(services, 'tracking', true);
+
+        // Update persisted state
+        await context.globalState.update('devtrackAuthState', {
+          username,
+          repoName,
+          lastWorkspace: currentWorkspace,
+        });
+
+        services.outputChannel.appendLine(
+          'DevTrack: Successfully restored authentication state'
+        );
+        return true;
+      }
+    }
+  } catch (error) {
+    services.outputChannel.appendLine(
+      `DevTrack: Error restoring auth state - ${error}`
+    );
+  }
+  return false;
 }
 
 async function initializeServices(
@@ -224,7 +414,6 @@ async function initializeServices(
   context.subscriptions.push(outputChannel);
   outputChannel.appendLine('DevTrack: Extension activated.');
 
-  // Initialize basic services
   const services: DevTrackServices = {
     outputChannel,
     githubService: new GitHubService(outputChannel),
@@ -243,58 +432,29 @@ async function initializeServices(
     services.authStatusBar
   );
 
-  // Try to restore previous session
-  try {
-    const session = await vscode.authentication.getSession(
-      'github',
-      ['repo', 'read:user'],
-      {
-        createIfNone: false,
-      }
+  // Try to restore authentication state
+  const authRestored = await restoreAuthenticationState(context, services);
+
+  if (!authRestored) {
+    // If restoration failed, check if we should show the initial setup prompt
+    const shouldPrompt = context.globalState.get(
+      'devtrackShouldPromptAuth',
+      true
     );
+    if (shouldPrompt) {
+      const response = await vscode.window.showInformationMessage(
+        'DevTrack needs to connect to GitHub. Would you like to connect now?',
+        'Yes',
+        'No',
+        "Don't Ask Again"
+      );
 
-    if (session) {
-      // Get persisted state
-      const persistedState =
-        context.globalState.get<PersistedAuthState>('devtrackAuthState');
-      const currentWorkspace =
-        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-      if (persistedState?.username && currentWorkspace) {
-        services.githubService.setToken(session.accessToken);
-        const username = await services.githubService.getUsername();
-
-        if (username === persistedState.username) {
-          // Re-initialize with persisted settings
-          const config = vscode.workspace.getConfiguration('devtrack');
-          const repoName =
-            config.get<string>('repoName') ||
-            persistedState.repoName ||
-            'code-tracking';
-          const remoteUrl = `https://github.com/${username}/${repoName}.git`;
-
-          await setupRepository(services, repoName, remoteUrl);
-          await initializeTracker(services);
-
-          updateStatusBar(services, 'auth', true);
-          updateStatusBar(services, 'tracking', true);
-
-          // Update persisted state
-          await context.globalState.update('devtrackAuthState', {
-            username,
-            repoName,
-            lastWorkspace: currentWorkspace,
-          });
-
-          outputChannel.appendLine(
-            'DevTrack: Successfully restored previous session'
-          );
-        }
+      if (response === 'Yes') {
+        vscode.commands.executeCommand('devtrack.login');
+      } else if (response === "Don't Ask Again") {
+        await context.globalState.update('devtrackShouldPromptAuth', false);
       }
     }
-  } catch (error) {
-    outputChannel.appendLine(`DevTrack: Error restoring session - ${error}`);
-    // Continue with normal initialization if restoration fails
   }
 
   // Load and validate configuration
@@ -703,6 +863,4 @@ function showWelcomeMessage(
   }
 }
 
-export function deactivate() {
-  // Cleanup will be handled by VS Code's disposal of subscriptions
-}
+export function deactivate() {}
