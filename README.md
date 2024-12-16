@@ -92,7 +92,7 @@ If you're using Windows, please follow these steps to ensure DevTrack works corr
    git config --global core.safecrlf false
    git config --global core.longpaths true
 
-3. Continue the steps in Getting Started
+3. **Refer back to Getting Started section**
 ---
 ## Preview Example
 
