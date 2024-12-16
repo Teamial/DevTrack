@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable no-undef */
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit } from 'simple-git';
@@ -6,6 +7,7 @@ import { EventEmitter } from 'events';
 import { OutputChannel } from 'vscode';
 import { promisify } from 'util';
 import { exec } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 const execAsync = promisify(exec);
 
@@ -41,14 +43,87 @@ export class GitService extends EventEmitter {
 
     // Initialize Git with custom configuration
     this.git = simpleGit(this.repoPath, {
+      binary: this.findGitExecutable(),
       maxConcurrentProcesses: 1,
       timeout: {
-        block: 10000, // 10 second timeout
+        block: 10000,
       },
     });
 
     // Configure Git to handle large repositories
     this.initGitConfig();
+  }
+
+  private findGitExecutable(): string {
+    const platform = process.platform;
+    let gitPath: string | null = null;
+
+    try {
+      if (platform === 'win32') {
+        // Check common Windows Git installation paths
+        const possiblePaths = [
+          'C:\\Program Files\\Git\\cmd\\git.exe',
+          'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
+          process.env.PROGRAMFILES + '\\Git\\cmd\\git.exe',
+          process.env.LOCALAPPDATA + '\\Programs\\Git\\cmd\\git.exe',
+        ];
+
+        for (const path of possiblePaths) {
+          try {
+            execSync(`"${path}" --version`);
+            gitPath = path;
+            break;
+          } catch (e) {
+            // Continue checking other paths
+          }
+        }
+      } else {
+        // On Unix-like systems, try to find git in PATH
+        gitPath = execSync('which git').toString().trim();
+      }
+
+      if (!gitPath) {
+        throw new Error('Git executable not found');
+      }
+
+      execSync(`"${gitPath}" --version`);
+      this.outputChannel.appendLine(`DevTrack: Found Git at ${gitPath}`);
+      return gitPath;
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error finding Git executable - ${error}`
+      );
+      throw new Error('Git is not properly installed or not in PATH');
+    }
+  }
+
+  private async verifyGitAccess(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const gitProcess = spawn(this.findGitExecutable(), ['--version']);
+
+      gitProcess.on('error', (error) => {
+        this.outputChannel.appendLine(
+          `DevTrack: Git access verification failed - ${error.message}`
+        );
+        reject(
+          new Error(
+            'Git is not accessible. Please ensure Git is installed and in your PATH.'
+          )
+        );
+      });
+
+      gitProcess.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(
+            new Error(
+              'Git verification failed. Please check your Git installation.'
+            )
+          );
+        }
+      });
+    });
   }
 
   private async initGitConfig() {
@@ -118,6 +193,7 @@ export class GitService extends EventEmitter {
   async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
+        await this.verifyGitAccess();
         const isRepo = await this.git.checkIsRepo();
         if (!isRepo) {
           await this.git.init();
@@ -186,15 +262,30 @@ export class GitService extends EventEmitter {
           'DevTrack: Pushed initial commit to remote.'
         );
       } catch (error: any) {
-        this.outputChannel.appendLine(
-          `DevTrack: Failed to initialize Git repository. ${error.message}`
-        );
-        vscode.window.showErrorMessage(
-          `DevTrack: Failed to initialize Git repository. ${error.message}`
-        );
+        this.handleGitError(error);
         throw error;
       }
     });
+  }
+
+  private handleGitError(error: any): void {
+    let errorMessage = 'Git operation failed';
+
+    if (error.message?.includes('ENOENT')) {
+      errorMessage =
+        'Git is not accessible. Please ensure Git is installed and in your PATH.';
+    } else if (error.message?.includes('spawn git ENOENT')) {
+      errorMessage =
+        'Failed to spawn Git process. Please verify your Git installation.';
+    } else if (error.message?.includes('not a git repository')) {
+      errorMessage =
+        'Not a Git repository. Please initialize the repository first.';
+    }
+
+    this.outputChannel.appendLine(
+      `DevTrack: ${errorMessage} - ${error.message}`
+    );
+    vscode.window.showErrorMessage(`DevTrack: ${errorMessage}`);
   }
 
   async commitAndPush(message: string): Promise<void> {
