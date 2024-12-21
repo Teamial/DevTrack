@@ -7,6 +7,8 @@ import { Tracker } from './services/tracker';
 import { SummaryGenerator } from './services/summaryGenerator';
 import { Scheduler } from './services/scheduler';
 import { execSync } from 'child_process';
+import * as path from 'path';
+import * as fs from 'fs';
 
 // Git installation handling
 class GitInstallationHandler {
@@ -316,8 +318,76 @@ DevTrack will:
   );
 }
 
+async function recoverFromGitIssues(services: DevTrackServices): Promise<void> {
+  try {
+    // Clear existing Git state
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('No workspace folder found');
+    }
+
+    const gitPath = path.join(workspaceRoot, '.git');
+    if (fs.existsSync(gitPath)) {
+      await vscode.workspace.fs.delete(vscode.Uri.file(gitPath), {
+        recursive: true,
+      });
+    }
+
+    // Clear the existing session by requesting with createIfNone: false
+    try {
+      await vscode.authentication.getSession('github', ['repo', 'read:user'], {
+        createIfNone: false,
+        clearSessionPreference: true,
+      });
+    } catch (error) {
+      // Ignore errors here, just trying to clear the session
+    }
+
+    // Reinitialize services
+    services.githubService = new GitHubService(services.outputChannel);
+    services.gitService = new GitService(services.outputChannel);
+
+    // Get fresh GitHub token
+    const session = await vscode.authentication.getSession(
+      'github',
+      ['repo', 'read:user'],
+      {
+        createIfNone: true,
+        clearSessionPreference: true,
+      }
+    );
+
+    if (!session) {
+      throw new Error('Failed to authenticate with GitHub');
+    }
+
+    services.githubService.setToken(session.accessToken);
+
+    // Setup repository from scratch
+    const username = await services.githubService.getUsername();
+    if (!username) {
+      throw new Error('Failed to get GitHub username');
+    }
+
+    const config = vscode.workspace.getConfiguration('devtrack');
+    const repoName = config.get<string>('repoName') || 'code-tracking';
+    const remoteUrl = `https://github.com/${username}/${repoName}.git`;
+
+    await services.gitService.initializeRepo(remoteUrl);
+  } catch (error: any) {
+    throw new Error(`Recovery failed: ${error.message}`);
+  }
+}
+
 // Extension activation handler
 export async function activate(context: vscode.ExtensionContext) {
+  let testCommand = vscode.commands.registerCommand('devtrack.test', () => {
+    vscode.window.showInformationMessage(
+      'DevTrack Debug Version: Test Command Executed'
+    );
+  });
+  context.subscriptions.push(testCommand);
+
   const services = await initializeServices(context);
   if (!services) {
     return;
