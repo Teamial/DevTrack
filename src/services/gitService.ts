@@ -127,6 +127,8 @@ export class GitService extends EventEmitter {
   }
 
   private initializeWorkspace(): void {
+    const gitPath = this.findGitExecutable();
+    this.outputChannel.appendLine(`DevTrack: Using Git executable: ${gitPath}`);
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -139,16 +141,21 @@ export class GitService extends EventEmitter {
       // Initialize Git with safe options
       const options: Partial<SimpleGitOptions> = {
         baseDir: this.repoPath,
+        binary: gitPath, // NEW: Now using explicit gitPath
         maxConcurrentProcesses: 1,
         trimmed: false,
+        config: [], // NEW: Initialize empty config array
       };
 
       if (this.isWindows) {
-        // Add Windows-specific options if needed
         options.config = [
           'core.autocrlf=true',
           'core.safecrlf=false',
           'core.longpaths=true',
+          'core.quotePath=false', // NEW: Handle special characters
+          'core.preloadIndex=true', // NEW: Improve performance
+          'core.fscache=true', // NEW: Improve performance
+          'credential.helper=store', // NEW: Improve authentication
         ];
       }
 
@@ -169,9 +176,19 @@ export class GitService extends EventEmitter {
   private findGitExecutable(): string {
     try {
       if (this.isWindows) {
+        const pathEnv = process.env.PATH || '';
+        const paths = pathEnv.split(path.delimiter);
+
+        for (const basePath of paths) {
+          const gitExePath = path.join(basePath, 'git.exe');
+          if (fs.existsSync(gitExePath)) {
+            return gitExePath.replace(/\\/g, '/'); // NEW: Convert Windows backslashes to forward slashes
+          }
+        }
+
         const commonPaths = [
-          'C:\\Program Files\\Git\\cmd\\git.exe',
-          'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
+          'C:/Program Files/Git/cmd/git.exe',
+          'C:/Program Files (x86)/Git/cmd/git.exe',
         ];
 
         for (const gitPath of commonPaths) {
@@ -182,11 +199,12 @@ export class GitService extends EventEmitter {
 
         // Fallback to using PATH
         try {
-          const gitPathFromEnv = execSync('where git', { encoding: 'utf8' })
+          const gitPathFromWhere = execSync('where git', { encoding: 'utf8' })
             .split('\n')[0]
-            .trim();
-          if (gitPathFromEnv) {
-            return gitPathFromEnv;
+            .trim()
+            .replace(/\\/g, '/'); // NEW: Convert backslashes
+          if (gitPathFromWhere && fs.existsSync(gitPathFromWhere)) {
+            return gitPathFromWhere;
           }
         } catch (error) {
           this.outputChannel.appendLine('DevTrack: Git not found in PATH');
@@ -250,11 +268,33 @@ export class GitService extends EventEmitter {
 
   private async verifyGitConfig(): Promise<void> {
     try {
+      // Get Git executable path with proper escaping for Windows
+      const gitPath = this.findGitExecutable();
+      if (this.isWindows) {
+        // Verify basic Git functionality on Windows first
+        try {
+          execSync(`"${gitPath}" --version`, { encoding: 'utf8' });
+        } catch (error: any) {
+          throw new Error(`Git executable validation failed: ${error.message}`);
+        }
+      }
+
       const options = {
         baseDir: this.repoPath,
-        binary: this.findGitExecutable(),
+        binary: gitPath,
         maxConcurrentProcesses: 1,
       };
+
+      // Add Windows-specific options if needed
+      if (this.isWindows) {
+        Object.assign(options, {
+          config: [
+            'core.quotePath=false',
+            'core.preloadIndex=true',
+            'core.fscache=true',
+          ],
+        });
+      }
 
       // Test Git configuration
       const testGit = simpleGit(options);
@@ -267,6 +307,25 @@ export class GitService extends EventEmitter {
         const remotes = await testGit.getRemotes(true);
         if (remotes.length === 0) {
           throw new Error('No remote configured');
+        }
+      }
+
+      // Additional Windows path verification if needed
+      if (this.isWindows) {
+        try {
+          const configTest = await testGit.raw([
+            'config',
+            '--system',
+            '--list',
+          ]);
+          this.outputChannel.appendLine(
+            'DevTrack: Windows Git configuration verified'
+          );
+        } catch (error) {
+          // Only log the error but don't throw, as system config might not be accessible
+          this.outputChannel.appendLine(
+            'DevTrack: System Git config check skipped'
+          );
         }
       }
     } catch (error: any) {
