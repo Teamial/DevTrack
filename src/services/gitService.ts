@@ -126,9 +126,7 @@ export class GitService extends EventEmitter {
     }
   }
 
-  private initializeWorkspace(): void {
-    const gitPath = this.findGitExecutable();
-    this.outputChannel.appendLine(`DevTrack: Using Git executable: ${gitPath}`);
+  private async initializeWorkspace(): Promise<void> {
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -138,13 +136,21 @@ export class GitService extends EventEmitter {
 
       this.repoPath = workspaceFolders[0].uri.fsPath;
 
+      // Get Git executable path
+      const gitPath = this.findGitExecutable();
+      this.outputChannel.appendLine(
+        `DevTrack: Using Git executable: ${gitPath}`
+      );
+
       // Initialize Git with safe options
       const options: Partial<SimpleGitOptions> = {
         baseDir: this.repoPath,
-        binary: gitPath, // NEW: Now using explicit gitPath
+        binary: gitPath,
         maxConcurrentProcesses: 1,
         trimmed: false,
-        config: [], // NEW: Initialize empty config array
+        unsafe: {
+          allowUnsafeCustomBinary: true, // Allow spaces in Windows paths
+        },
       };
 
       if (this.isWindows) {
@@ -152,16 +158,18 @@ export class GitService extends EventEmitter {
           'core.autocrlf=true',
           'core.safecrlf=false',
           'core.longpaths=true',
-          'core.quotePath=false', // NEW: Handle special characters
-          'core.preloadIndex=true', // NEW: Improve performance
-          'core.fscache=true', // NEW: Improve performance
-          'credential.helper=store', // NEW: Improve authentication
+          'core.quotePath=false',
+          'core.preloadIndex=true',
+          'core.fscache=true',
         ];
       }
 
       this.git = simpleGit(options);
 
-      this.initGitConfig().catch((error) => {
+      // Verify the configuration
+      await this.verifyGitConfig();
+
+      await this.initGitConfig().catch((error) => {
         this.outputChannel.appendLine(
           `DevTrack: Git config initialization error - ${error}`
         );
@@ -176,19 +184,22 @@ export class GitService extends EventEmitter {
   private findGitExecutable(): string {
     try {
       if (this.isWindows) {
+        // Try to get Git path from environment variables first
         const pathEnv = process.env.PATH || '';
         const paths = pathEnv.split(path.delimiter);
 
         for (const basePath of paths) {
           const gitExePath = path.join(basePath, 'git.exe');
           if (fs.existsSync(gitExePath)) {
-            return gitExePath.replace(/\\/g, '/'); // NEW: Convert Windows backslashes to forward slashes
+            // Don't convert backslashes to forward slashes anymore
+            return gitExePath;
           }
         }
 
+        // Check common installation paths
         const commonPaths = [
-          'C:/Program Files/Git/cmd/git.exe',
-          'C:/Program Files (x86)/Git/cmd/git.exe',
+          path.join('C:', 'Program Files', 'Git', 'cmd', 'git.exe'),
+          path.join('C:', 'Program Files (x86)', 'Git', 'cmd', 'git.exe'),
         ];
 
         for (const gitPath of commonPaths) {
@@ -197,20 +208,22 @@ export class GitService extends EventEmitter {
           }
         }
 
-        // Fallback to using PATH
+        // Last resort: try where command
         try {
           const gitPathFromWhere = execSync('where git', { encoding: 'utf8' })
             .split('\n')[0]
-            .trim()
-            .replace(/\\/g, '/'); // NEW: Convert backslashes
+            .trim();
           if (gitPathFromWhere && fs.existsSync(gitPathFromWhere)) {
             return gitPathFromWhere;
           }
         } catch (error) {
           this.outputChannel.appendLine('DevTrack: Git not found in PATH');
         }
-        return 'git'; // Last resort fallback
+
+        // Final fallback
+        return 'git';
       } else {
+        // Unix-like systems
         try {
           return execSync('which git', { encoding: 'utf8' }).trim();
         } catch {
