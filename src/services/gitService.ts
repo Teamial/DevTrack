@@ -397,6 +397,63 @@ export class GitService extends EventEmitter {
     throw lastError;
   }
 
+  private async hasProjectFiles(): Promise<boolean> {
+    try {
+      const files = await vscode.workspace.findFiles(
+        '**/*',
+        '**/node_modules/**'
+      );
+      return files.length > 0;
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error checking project files - ${error}`
+      );
+      return false;
+    }
+  }
+
+  private async backupProjectFiles(): Promise<void> {
+    try {
+      const backupDir = path.join(this.repoPath, '.devtrack-backup');
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir);
+      }
+
+      // Create a timestamp for the backup
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupDir, `backup-${timestamp}`);
+      fs.mkdirSync(backupPath);
+
+      // Copy all project files except node_modules and .git
+      const files = await vscode.workspace.findFiles(
+        '**/*',
+        '{**/node_modules/**,**/.git/**}'
+      );
+      for (const file of files) {
+        const relativePath = vscode.workspace.asRelativePath(file);
+        const targetPath = path.join(backupPath, relativePath);
+
+        // Create directory structure if needed
+        const targetDir = path.dirname(targetPath);
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+
+        // Copy the file
+        fs.copyFileSync(file.fsPath, targetPath);
+      }
+
+      this.outputChannel.appendLine(
+        `DevTrack: Created backup at ${backupPath}`
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error creating backup - ${error}`
+      );
+      throw error;
+    }
+  }
+
   public async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
@@ -407,29 +464,33 @@ export class GitService extends EventEmitter {
           throw new Error('Git not initialized');
         }
 
-        // Clean up any existing Git state
+        // Check if there are project files to protect
+        const hasFiles = await this.hasProjectFiles();
+        if (hasFiles) {
+          // Create a backup before any Git operations
+          await this.backupProjectFiles();
+        }
+
+        // Clean up any existing Git state safely
         await this.cleanupGitLocks();
 
         await this.withRetry(async () => {
           const isRepo = await this.git.checkIsRepo();
 
           if (!isRepo) {
+            // For new repos, initialize without cleaning
             await this.git.init();
             this.outputChannel.appendLine(
               'DevTrack: Initialized new Git repository.'
             );
+
+            // Stage existing files instead of cleaning
+            await this.git.add('.');
+            await this.git.commit(
+              'DevTrack: Initial commit with existing project files'
+            );
           }
         });
-
-        // Force clean working directory
-        await this.withRetry(() => this.git.clean('f', ['-d']));
-
-        // Reset any existing state
-        try {
-          await this.withRetry(() => this.git.raw(['reset', '--hard']));
-        } catch (error) {
-          // Ignore reset errors on fresh repos
-        }
 
         // Configure remotes with force
         await this.withRetry(async () => {
@@ -440,7 +501,7 @@ export class GitService extends EventEmitter {
           await this.git.addRemote('origin', remoteUrl);
         });
 
-        // Ensure main branch exists and is clean
+        // Ensure main branch exists
         await this.withRetry(async () => {
           const branches = await this.git.branchLocal();
           if (!branches.current || branches.current !== 'main') {
@@ -452,19 +513,16 @@ export class GitService extends EventEmitter {
           }
         });
 
-        // Initial commit with proper error handling
+        // Push to remote with proper error handling
         await this.withRetry(async () => {
           try {
-            await this.git.add('.');
-            await this.git.commit('DevTrack: Initial commit', [
-              '--allow-empty',
-            ]);
             await this.git.push(['-u', 'origin', 'main']);
           } catch (error: any) {
             if (error.message.includes('rejected')) {
               // Handle case where remote exists but we can't push
               await this.git.fetch('origin');
-              await this.git.reset(['--hard', 'origin/main']);
+              // Don't reset --hard here, just merge or rebase if needed
+              await this.git.pull(['--rebase=true', 'origin', 'main']);
             } else {
               throw error;
             }
