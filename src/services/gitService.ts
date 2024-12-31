@@ -397,63 +397,6 @@ export class GitService extends EventEmitter {
     throw lastError;
   }
 
-  private async hasProjectFiles(): Promise<boolean> {
-    try {
-      const files = await vscode.workspace.findFiles(
-        '**/*',
-        '**/node_modules/**'
-      );
-      return files.length > 0;
-    } catch (error) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error checking project files - ${error}`
-      );
-      return false;
-    }
-  }
-
-  private async backupProjectFiles(): Promise<void> {
-    try {
-      const backupDir = path.join(this.repoPath, '.devtrack-backup');
-      if (!fs.existsSync(backupDir)) {
-        fs.mkdirSync(backupDir);
-      }
-
-      // Create a timestamp for the backup
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = path.join(backupDir, `backup-${timestamp}`);
-      fs.mkdirSync(backupPath);
-
-      // Copy all project files except node_modules and .git
-      const files = await vscode.workspace.findFiles(
-        '**/*',
-        '{**/node_modules/**,**/.git/**}'
-      );
-      for (const file of files) {
-        const relativePath = vscode.workspace.asRelativePath(file);
-        const targetPath = path.join(backupPath, relativePath);
-
-        // Create directory structure if needed
-        const targetDir = path.dirname(targetPath);
-        if (!fs.existsSync(targetDir)) {
-          fs.mkdirSync(targetDir, { recursive: true });
-        }
-
-        // Copy the file
-        fs.copyFileSync(file.fsPath, targetPath);
-      }
-
-      this.outputChannel.appendLine(
-        `DevTrack: Created backup at ${backupPath}`
-      );
-    } catch (error) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error creating backup - ${error}`
-      );
-      throw error;
-    }
-  }
-
   public async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
@@ -464,13 +407,6 @@ export class GitService extends EventEmitter {
           throw new Error('Git not initialized');
         }
 
-        // Check if there are project files to protect
-        const hasFiles = await this.hasProjectFiles();
-        if (hasFiles) {
-          // Create a backup before any Git operations
-          await this.backupProjectFiles();
-        }
-
         // Clean up any existing Git state safely
         await this.cleanupGitLocks();
 
@@ -478,17 +414,44 @@ export class GitService extends EventEmitter {
           const isRepo = await this.git.checkIsRepo();
 
           if (!isRepo) {
-            // For new repos, initialize without cleaning
             await this.git.init();
             this.outputChannel.appendLine(
               'DevTrack: Initialized new Git repository.'
             );
+          }
 
-            // Stage existing files instead of cleaning
+          // Ensure we're on main branch
+          try {
+            const branches = await this.git.branchLocal();
+
+            if (!branches.all.includes('main')) {
+              // Create and checkout main if it doesn't exist
+              await this.git.checkoutLocalBranch('main');
+            } else if (branches.current !== 'main') {
+              // Switch to main if we're on a different branch
+              await this.git.checkout('main');
+            }
+          } catch (error) {
+            // If branch operations fail, create main branch fresh
+            await this.git.checkout(['-B', 'main']);
+          }
+
+          // Stage and commit any existing files
+          const status = await this.git.status();
+
+          if (
+            status.files.length > 0 ||
+            !status.staged.length ||
+            status.not_added.length > 0
+          ) {
             await this.git.add('.');
-            await this.git.commit(
-              'DevTrack: Initial commit with existing project files'
-            );
+            const hasChanges = (await this.git.status()).files.length > 0;
+
+            if (hasChanges) {
+              await this.git.commit(
+                'DevTrack: Initial commit with existing project files'
+              );
+            }
           }
         });
 
@@ -515,14 +478,42 @@ export class GitService extends EventEmitter {
 
         // Push to remote with proper error handling
         await this.withRetry(async () => {
+          const remotes = await this.git.getRemotes(true);
+          if (remotes.find((remote) => remote.name === 'origin')) {
+            await this.git.removeRemote('origin');
+          }
+          await this.git.addRemote('origin', remoteUrl);
+        });
+
+        // Push to remote with proper error handling
+        await this.withRetry(async () => {
           try {
+            // Ensure we have commits before pushing
+            const commits = await this.git.log(['--oneline']);
+            if (!commits.total) {
+              // Create an empty commit if no commits exist
+              await this.git.commit('DevTrack: Initial commit', {
+                '--allow-empty': null,
+              });
+            }
+
+            // Now push with upstream tracking
             await this.git.push(['-u', 'origin', 'main']);
           } catch (error: any) {
             if (error.message.includes('rejected')) {
               // Handle case where remote exists but we can't push
               await this.git.fetch('origin');
-              // Don't reset --hard here, just merge or rebase if needed
               await this.git.pull(['--rebase=true', 'origin', 'main']);
+              await this.git.push(['--force-with-lease', 'origin', 'main']);
+            } else if (
+              error.message.includes('src refspec main does not match any')
+            ) {
+              // Handle case where main branch isn't properly initialized
+              await this.git.checkout(['-B', 'main']);
+              await this.git.commit('DevTrack: Initialize main branch', {
+                '--allow-empty': null,
+              });
+              await this.git.push(['-u', 'origin', 'main']);
             } else {
               throw error;
             }
