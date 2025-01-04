@@ -126,6 +126,37 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async verifyLinuxPermissions(): Promise<void> {
+    if (!this.isWindows) {
+      try {
+        // Check if git commands can be executed
+        await execAsync('git --version');
+
+        // Check if .gitconfig is accessible
+        const homeDir = process.env.HOME;
+        if (homeDir) {
+          const gitConfig = path.join(homeDir, '.gitconfig');
+          try {
+            await fs.promises.access(
+              gitConfig,
+              fs.constants.R_OK | fs.constants.W_OK
+            );
+          } catch {
+            // Create .gitconfig if it doesn't exist
+            await fs.promises.writeFile(gitConfig, '', { mode: 0o644 });
+          }
+        }
+      } catch (error: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Linux permissions check failed - ${error.message}`
+        );
+        throw new Error(
+          'Git permissions issue detected. Please check your Git installation and permissions.'
+        );
+      }
+    }
+  }
+
   private async initializeWorkspace(): Promise<void> {
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -174,6 +205,9 @@ export class GitService extends EventEmitter {
       // Verify the configuration
       await this.verifyGitConfig();
       await this.initGitConfig();
+
+      // Check Linux permissions
+      await this.verifyLinuxPermissions();
     } catch (error) {
       this.outputChannel.appendLine(
         `DevTrack: Workspace initialization error - ${error}`
@@ -234,7 +268,41 @@ export class GitService extends EventEmitter {
       } else {
         // Unix-like systems
         try {
-          return execSync('which git', { encoding: 'utf8' }).trim();
+          // Try multiple methods to find Git
+          const methods = ['which git', 'command -v git', 'type -p git'];
+
+          for (const method of methods) {
+            try {
+              const gitPath = execSync(method, { encoding: 'utf8' }).trim();
+              if (gitPath && fs.existsSync(gitPath)) {
+                this.outputChannel.appendLine(
+                  `DevTrack: Found Git using '${method}' at ${gitPath}`
+                );
+                return gitPath;
+              }
+            } catch (e) {
+              // Continue to next method
+            }
+          }
+
+          // Check common Linux paths
+          const commonPaths = [
+            '/usr/bin/git',
+            '/usr/local/bin/git',
+            '/opt/local/bin/git',
+          ];
+
+          for (const gitPath of commonPaths) {
+            if (fs.existsSync(gitPath)) {
+              this.outputChannel.appendLine(
+                `DevTrack: Found Git at ${gitPath}`
+              );
+              return gitPath;
+            }
+          }
+
+          // Fallback to 'git' and let the system resolve it
+          return 'git';
         } catch {
           return 'git';
         }
