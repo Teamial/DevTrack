@@ -478,6 +478,43 @@ export class GitService extends EventEmitter {
         // Clean up any existing Git state safely
         await this.cleanupGitLocks();
 
+        if (!this.isWindows) {
+          try {
+            // Check write permissions in repository directory
+            await fs.promises.access(this.repoPath, fs.constants.W_OK);
+
+            // Check if .git directory exists and is writable
+            const gitDir = path.join(this.repoPath, '.git');
+            if (fs.existsSync(gitDir)) {
+              await fs.promises.access(gitDir, fs.constants.W_OK);
+            }
+          } catch (error: any) {
+            throw new Error(
+              `Permission denied: Unable to write to repository directory. Please check folder permissions: ${error.message}`
+            );
+          }
+        }
+
+        await this.withRetry(async () => {
+          const isRepo = await this.git.checkIsRepo();
+
+          if (!isRepo) {
+            // On Linux, explicitly set init.defaultBranch
+            if (!this.isWindows) {
+              await this.git.addConfig(
+                'init.defaultBranch',
+                'main',
+                false,
+                'local'
+              );
+            }
+            await this.git.init();
+            this.outputChannel.appendLine(
+              'DevTrack: Initialized new Git repository.'
+            );
+          }
+        });
+
         await this.withRetry(async () => {
           const isRepo = await this.git.checkIsRepo();
 
@@ -588,6 +625,28 @@ export class GitService extends EventEmitter {
           }
         });
       } catch (error: any) {
+        if (!this.isWindows && error.message.includes('Permission denied')) {
+          this.outputChannel.appendLine(
+            'DevTrack: Permission error detected on Linux system'
+          );
+          this.outputChannel.appendLine(`Repository path: ${this.repoPath}`);
+          this.outputChannel.appendLine(
+            `User home directory: ${process.env.HOME}`
+          );
+          // Log current user's Git configuration location
+          try {
+            const { stdout } = await execAsync(
+              'git config --list --show-origin'
+            );
+            this.outputChannel.appendLine('Git config locations:');
+            this.outputChannel.appendLine(stdout);
+          } catch (configError) {
+            this.outputChannel.appendLine(
+              `Error getting Git config: ${configError}`
+            );
+          }
+        }
+
         this.handleGitError(error);
         throw error;
       }
