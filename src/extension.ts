@@ -652,25 +652,50 @@ async function registerCommands(
     'devtrack.login',
     async () => {
       try {
+        services.outputChannel.appendLine(
+          'DevTrack: Starting login process...'
+        );
+
+        // Clear any existing token
         services.githubService.setToken('');
+
+        // Try to get a new session with force
         const session = await vscode.authentication.getSession(
           'github',
           ['repo', 'read:user', 'user:email'],
-          { forceNewSession: true }
+          {
+            forceNewSession: true,
+            clearSessionPreference: true,
+          }
         );
 
         if (session) {
+          services.outputChannel.appendLine(
+            'DevTrack: Successfully obtained GitHub session'
+          );
           await initializeDevTrack(services);
         } else {
           services.outputChannel.appendLine(
-            'DevTrack: GitHub connection canceled.'
+            'DevTrack: No session obtained from GitHub auth'
           );
           vscode.window.showInformationMessage(
-            'DevTrack: GitHub connection was canceled.'
+            'DevTrack: GitHub connection was cancelled.'
           );
         }
       } catch (error: any) {
-        handleError(services, 'GitHub connection failed', error);
+        if (error.message?.includes('Cancelled')) {
+          services.outputChannel.appendLine(
+            'DevTrack: Login cancelled by user'
+          );
+          vscode.window.showInformationMessage(
+            'DevTrack: Login was cancelled. Try again when ready.'
+          );
+        } else {
+          services.outputChannel.appendLine(
+            `DevTrack: Login error - ${error.message}`
+          );
+          handleError(services, 'GitHub connection failed', error);
+        }
       }
     }
   );
@@ -898,21 +923,68 @@ function handleError(
 
 async function ensureGitHubAuth(services: DevTrackServices): Promise<boolean> {
   try {
-    const session = await vscode.authentication.getSession('github', [
-      'repo',
-      'read:user',
-      'user:email',
-    ]);
-    return !!session;
-  } catch {
-    const response = await vscode.window.showErrorMessage(
-      'DevTrack requires GitHub authentication. Would you like to sign in now?',
-      'Sign in to GitHub',
-      'Cancel'
+    // First try to get existing session silently
+    try {
+      const session = await vscode.authentication.getSession(
+        'github',
+        ['repo', 'read:user'],
+        {
+          createIfNone: false,
+          silent: true,
+        }
+      );
+      if (session) {
+        services.outputChannel.appendLine(
+          'DevTrack: Found existing GitHub session'
+        );
+        return true;
+      }
+    } catch (e) {
+      // Ignore error from silent check
+    }
+
+    // If no existing session, try interactive auth
+    services.outputChannel.appendLine(
+      'DevTrack: Requesting GitHub authentication...'
+    );
+    const session = await vscode.authentication.getSession(
+      'github',
+      ['repo', 'read:user'],
+      {
+        createIfNone: true,
+      }
     );
 
-    if (response === 'Sign in to GitHub') {
-      await vscode.commands.executeCommand('devtrack.login');
+    if (session) {
+      services.outputChannel.appendLine(
+        'DevTrack: GitHub authentication successful'
+      );
+      return true;
+    } else {
+      services.outputChannel.appendLine(
+        'DevTrack: GitHub authentication cancelled by user'
+      );
+      vscode.window.showInformationMessage(
+        'DevTrack requires GitHub authentication to continue.'
+      );
+      return false;
+    }
+  } catch (error: any) {
+    // Check for specific error types
+    if (error.message?.includes('Cancelled')) {
+      services.outputChannel.appendLine(
+        'DevTrack: Authentication was cancelled'
+      );
+      vscode.window.showInformationMessage(
+        'GitHub authentication was cancelled. Please try again.'
+      );
+    } else {
+      services.outputChannel.appendLine(
+        `DevTrack: Authentication error - ${error.message}`
+      );
+      vscode.window.showErrorMessage(
+        `DevTrack: Authentication failed - ${error.message}`
+      );
     }
     return false;
   }
