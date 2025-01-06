@@ -477,12 +477,35 @@ async function restoreAuthenticationState(
   return false;
 }
 
+function createBaseServices(
+  outputChannel: vscode.OutputChannel,
+  context: vscode.ExtensionContext
+): DevTrackServices {
+  return {
+    outputChannel,
+    githubService: new GitHubService(outputChannel),
+    gitService: new GitService(outputChannel),
+    tracker: new Tracker(outputChannel),
+    summaryGenerator: new SummaryGenerator(outputChannel, context),
+    scheduler: null,
+    trackingStatusBar: createStatusBarItem('tracking'),
+    authStatusBar: createStatusBarItem('auth'),
+    extensionContext: context,
+  };
+}
+
 async function initializeServices(
   context: vscode.ExtensionContext
 ): Promise<DevTrackServices | null> {
   const outputChannel = vscode.window.createOutputChannel('DevTrack');
   context.subscriptions.push(outputChannel);
   outputChannel.appendLine('DevTrack: Extension activated.');
+
+  // Early check for workspace
+  if (!vscode.workspace.workspaceFolders?.length) {
+    outputChannel.appendLine('DevTrack: No workspace folder open.');
+    return createBaseServices(outputChannel, context); // Create minimal services
+  }
 
   const services: DevTrackServices = {
     outputChannel,
@@ -580,24 +603,24 @@ async function registerCommands(
     'devtrack.startTracking',
     async () => {
       try {
-        // Check for workspace
+        // Early workspace check before any other operations
         if (!vscode.workspace.workspaceFolders?.length) {
-          throw new Error(
-            'Please open a folder or workspace before starting tracking.'
+          vscode.window.showInformationMessage(
+            'DevTrack: Please open a folder or workspace before starting tracking.'
           );
-        }
-
-        // Check Git installation
-        if (
-          !(await GitInstallationHandler.checkGitInstallation(
-            services.outputChannel
-          ))
-        ) {
           return;
         }
 
-        // Check GitHub authentication
-        if (!(await ensureGitHubAuth(services))) {
+        // Proceed with other checks only if workspace exists
+        const gitInstalled = await GitInstallationHandler.checkGitInstallation(
+          services.outputChannel
+        );
+        if (!gitInstalled) {
+          return;
+        }
+
+        const githubAuthed = await ensureGitHubAuth(services);
+        if (!githubAuthed) {
           return;
         }
 
@@ -605,9 +628,6 @@ async function registerCommands(
           services.scheduler.start();
           updateStatusBar(services, 'tracking', true);
           vscode.window.showInformationMessage('DevTrack: Tracking started.');
-          services.outputChannel.appendLine(
-            'DevTrack: Tracking started manually.'
-          );
         } else {
           const response = await vscode.window.showInformationMessage(
             'DevTrack needs to be set up before starting. Would you like to set it up now?',

@@ -29,15 +29,18 @@
     "commands": [
       {
         "command": "devtrack.startTracking",
-        "title": "DevTrack: Start Tracking"
+        "title": "DevTrack: Start Tracking",
+        "enablement": "workspaceFolderCount != 0"
       },
       {
         "command": "devtrack.stopTracking",
-        "title": "DevTrack: Stop Tracking"
+        "title": "DevTrack: Stop Tracking",
+        "enablement": "workspaceFolderCount != 0"
       },
       {
         "command": "devtrack.login",
-        "title": "DevTrack: Login to GitHub"
+        "title": "DevTrack: Login to GitHub",
+        "enablement": "workspaceFolderCount != 0"
       },
       {
         "command": "devtrack.logout",
@@ -46,6 +49,11 @@
       {
         "command": "devtrack.showGitGuide",
         "title": "DevTrack: Show Git Installation Guide"
+      },
+      {
+        "command": "devtrack.openFolder",
+        "title": "DevTrack: Open Folder",
+        "enablement": "workspaceFolderCount == 0"
       },
       {
         "command": "devtrack.test",
