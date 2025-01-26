@@ -202,77 +202,99 @@ export class GitService extends EventEmitter {
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders || workspaceFolders.length === 0) {
         this.outputChannel.appendLine('DevTrack: No workspace folder is open.');
-        return;
+        throw new Error('No workspace folder is open');
       }
 
       this.repoPath = workspaceFolders[0].uri.fsPath;
 
-      // Step 1: Get Git executable path
+      // Verify Git environment first
+      await this.checkGitEnvironment().catch(async (error) => {
+        // If error is about missing repository, we'll handle it later
+        if (!error.message.includes('not a valid Git repository')) {
+          throw error;
+        }
+      });
+
+      // Check and verify Linux permissions if needed
+      await this.verifyLinuxPermissions();
+
+      // Initialize Git configuration
       const gitPath = this.findGitExecutable();
-      if (!gitPath) {
-        throw new Error(
-          'Git executable not found. Ensure Git is installed and in the PATH.'
-        );
-      }
-
-      const normalizedGitPath = this.isWindows
-        ? gitPath.replace(/\\/g, '/')
-        : gitPath;
-      this.outputChannel.appendLine(
-        `DevTrack: Using Git executable: ${normalizedGitPath}`
-      );
-
-      // Step 2: Initialize Git with options
       const options: Partial<SimpleGitOptions> = {
         baseDir: this.repoPath,
-        binary: normalizedGitPath,
+        binary: gitPath,
         maxConcurrentProcesses: 1,
         trimmed: false,
         unsafe: {
-          allowUnsafeCustomBinary: true, // Allow spaces in Windows paths
+          allowUnsafeCustomBinary: true,
         },
       };
 
-      if (this.isWindows) {
-        options.config = [
-          'core.autocrlf=true',
-          'core.safecrlf=false',
-          'core.longpaths=true',
-          'core.quotePath=false',
-          'core.preloadIndex=true',
-          'core.fscache=true',
-          'core.ignorecase=true',
-        ];
-      }
-
+      // Initialize Git instance with basic options
       this.git = simpleGit(options);
 
-      // Step 3: Verify Git configuration
-      await this.verifyGitConfig();
+      // Verify Git configuration
+      await this.verifyGitConfig().catch(async (error) => {
+        // If config verification fails, try to initialize it
+        await this.initGitConfig().catch((configError) => {
+          this.outputChannel.appendLine(
+            `DevTrack: Failed to initialize Git config: ${configError}`
+          );
+          throw configError;
+        });
+      });
 
-      // Step 4: Validate Git version
-      const gitVersion = await this.getGitVersion();
-      if (!this.isGitVersionSupported(gitVersion)) {
-        throw new Error(
-          `Unsupported Git version ${gitVersion}. Please install version 2.30.0 or later.`
+      // Check if directory is a Git repository
+      const isRepo = await this.git.checkIsRepo();
+      if (!isRepo) {
+        // If not a repo, initialize it
+        this.outputChannel.appendLine(
+          'DevTrack: Directory is not a Git repository. Initializing...'
         );
+
+        try {
+          await this.git.init();
+          await this.git.addConfig(
+            'user.name',
+            'DevTrack User',
+            false,
+            'local'
+          );
+          await this.git.addConfig(
+            'user.email',
+            'devtrack@example.com',
+            false,
+            'local'
+          );
+
+          // Create initial commit to establish main branch
+          await this.git.add('.');
+          await this.git.commit('DevTrack: Initial commit', {
+            '--allow-empty': null,
+          });
+
+          this.outputChannel.appendLine(
+            'DevTrack: Successfully initialized Git repository'
+          );
+        } catch (initError: any) {
+          this.outputChannel.appendLine(
+            `DevTrack: Failed to initialize repository: ${initError.message}`
+          );
+          throw new Error(
+            `Failed to initialize Git repository: ${initError.message}`
+          );
+        }
       }
-      this.outputChannel.appendLine(
-        `DevTrack: Detected Git version ${gitVersion}.`
-      );
 
-      // Step 5: Validate repository path
-      if (!fs.existsSync(path.join(this.repoPath, '.git'))) {
-        throw new Error(
-          `The specified path (${this.repoPath}) is not a valid Git repository.`
-        );
+      // Setup platform-specific configurations
+      if (this.isWindows) {
+        await this.git.addConfig('core.autocrlf', 'true', false, 'local');
+      } else {
+        await this.git.addConfig('core.autocrlf', 'input', false, 'local');
       }
 
-      // Step 6: Check Linux permissions
-      await this.verifyLinuxPermissions();
-
       this.outputChannel.appendLine(
-        'DevTrack: Workspace initialized successfully.'
+        'DevTrack: Workspace initialized successfully'
       );
     } catch (error: unknown) {
       const errorMessage =
@@ -280,7 +302,13 @@ export class GitService extends EventEmitter {
       this.outputChannel.appendLine(
         `DevTrack: Workspace initialization error - ${errorMessage}`
       );
-      throw error; // Re-throwing the error after logging
+
+      // Show a more user-friendly error message
+      vscode.window.showErrorMessage(
+        `DevTrack: Failed to initialize workspace. ${errorMessage}. Please ensure Git is installed and you have appropriate permissions.`
+      );
+
+      throw error;
     }
   }
 
