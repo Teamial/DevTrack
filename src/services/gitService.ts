@@ -19,6 +19,21 @@ interface GitServiceEvents {
   retry: (operation: string, attempt: number) => void;
   push: (branch: string) => void;
 }
+
+interface TrackingMetadata {
+  projectPath: string;
+  lastSync: string;
+  lastCommit?: {
+    message: string;
+    timestamp: string;
+    changesCount: number;
+  };
+  changes?: Array<{
+    timestamp: string;
+    files: string[];
+    summary: string;
+  }>;
+}
 export class GitService extends EventEmitter {
   private git!: SimpleGit;
   private repoPath!: string;
@@ -33,12 +48,25 @@ export class GitService extends EventEmitter {
     listener: Function;
   }> = new Set();
 
+  // Store tracking data in user's home directory to avoid project interference
+  private readonly baseTrackingDir: string;
+  private currentTrackingDir: string = '';
+  private projectIdentifier: string = '';
+
   constructor(outputChannel: OutputChannel) {
     super();
     this.setMaxListeners(GitService.MAX_LISTENERS);
     this.outputChannel = outputChannel;
-    this.initializeWorkspace();
     this.setupDefaultErrorHandler();
+
+    // Create base tracking directory in user's home
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    this.baseTrackingDir = path.join(homeDir, '.devtrack');
+
+    // Ensure base directory exists
+    if (!fs.existsSync(this.baseTrackingDir)) {
+      fs.mkdirSync(this.baseTrackingDir, { recursive: true });
+    }
   }
   private setupDefaultErrorHandler(): void {
     if (this.listenerCount('error') === 0) {
@@ -159,107 +187,147 @@ export class GitService extends EventEmitter {
 
   private async checkGitEnvironment(): Promise<void> {
     try {
-      // Check if Git binary is in the PATH
-      const { stdout: gitVersionOutput } = await execAsync('git --version');
-      const versionMatch = gitVersionOutput.match(
-        /git version (\d+\.\d+\.\d+)/
-      );
-      if (!versionMatch) {
-        throw new Error(
-          'Unable to parse Git version. Ensure Git is installed correctly.'
-        );
+      const { stdout } = await execAsync('git --version');
+      const match = stdout.match(/git version (\d+\.\d+\.\d+)/);
+      if (!match) {
+        throw new Error('Unable to determine Git version');
       }
-      const installedVersion = versionMatch[1];
-      this.outputChannel.appendLine(
-        `DevTrack: Detected Git version ${installedVersion}.`
-      );
 
-      // Check Git version compatibility (example: minimum version 2.30.0)
-      const [major, minor] = installedVersion.split('.').map(Number);
+      const version = match[1];
+      const [major, minor] = version.split('.').map(Number);
+
       if (major < 2 || (major === 2 && minor < 30)) {
         throw new Error(
-          `Unsupported Git version ${installedVersion}. Please install version 2.30.0 or later.`
+          `Git version ${version} is not supported. Please upgrade to 2.30.0 or later.`
         );
       }
 
-      // Check if repoPath is a valid Git repository
-      if (!fs.existsSync(path.join(this.repoPath, '.git'))) {
-        throw new Error(
-          `The specified path (${this.repoPath}) is not a valid Git repository.`
-        );
-      }
-    } catch (error: any) {
       this.outputChannel.appendLine(
-        `DevTrack: Git environment check failed - ${error.message}`
+        `DevTrack: Git version ${version} verified`
       );
-      this.emit('error', error);
+    } catch (error: any) {
+      throw new Error(`Git environment check failed: ${error.message}`);
+    }
+  }
+
+  private async initializeTracking(): Promise<void> {
+    try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        throw new Error('No workspace folder is open');
+      }
+
+      const projectPath = workspaceFolders[0].uri.fsPath;
+
+      // Create a unique identifier for the project based on its path
+      this.projectIdentifier = Buffer.from(projectPath)
+        .toString('base64')
+        .replace(/[/+=]/g, '_');
+
+      // Create project-specific tracking directory in user's home directory
+      this.currentTrackingDir = path.join(
+        this.baseTrackingDir,
+        this.projectIdentifier
+      );
+
+      if (!fs.existsSync(this.currentTrackingDir)) {
+        await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
+      }
+
+      // Initialize Git in tracking directory only
+      const options: Partial<SimpleGitOptions> = {
+        baseDir: this.currentTrackingDir,
+        binary: this.findGitExecutable(),
+        maxConcurrentProcesses: 1,
+      };
+
+      this.git = simpleGit(options);
+      this.repoPath = this.currentTrackingDir; // Update repoPath to use tracking directory
+
+      this.outputChannel.appendLine(
+        `DevTrack: Tracking directory initialized at ${this.currentTrackingDir}`
+      );
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.outputChannel.appendLine(
+        `DevTrack: Tracking initialization failed - ${errorMessage}`
+      );
       throw error;
     }
   }
 
-  private async initializeWorkspace(): Promise<void> {
+  private async validateWorkspace(): Promise<boolean> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      this.outputChannel.appendLine('DevTrack: No workspace folder is open');
+      return false;
+    }
+
+    // Only validate Git is installed, don't check workspace Git status
     try {
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders || workspaceFolders.length === 0) {
-        this.outputChannel.appendLine('DevTrack: No workspace folder is open.');
-        throw new Error('No workspace folder is open');
+      await this.checkGitEnvironment();
+      return true;
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Git validation failed - ${error}`
+      );
+      return false;
+    }
+  }
+
+  private async createTrackingDirectory(): Promise<void> {
+    if (!this.currentTrackingDir) {
+      const homeDir = process.env.HOME || process.env.USERPROFILE;
+      if (!homeDir) {
+        throw new Error('Unable to determine home directory for DevTrack');
       }
 
-      this.repoPath = workspaceFolders[0].uri.fsPath;
+      // Create a unique tracking directory under .devtrack in home directory
+      const workspaceId = Buffer.from(
+        vscode.workspace.workspaceFolders![0].uri.fsPath
+      )
+        .toString('base64')
+        .replace(/[/+=]/g, '_');
 
-      // Verify Git environment first
-      await this.checkGitEnvironment().catch(async (error) => {
-        // If error is about missing repository, we'll handle it later
-        if (!error.message.includes('not a valid Git repository')) {
-          throw error;
+      this.currentTrackingDir = path.join(
+        homeDir,
+        '.devtrack',
+        'tracking',
+        workspaceId
+      );
+
+      if (!fs.existsSync(this.currentTrackingDir)) {
+        await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
+      }
+    }
+  }
+
+  public async initializeRepo(remoteUrl: string): Promise<void> {
+    return this.enqueueOperation(async () => {
+      try {
+        // First validate workspace and Git installation
+        if (!(await this.validateWorkspace())) {
+          return;
         }
-      });
 
-      // Check and verify Linux permissions if needed
-      await this.verifyLinuxPermissions();
+        // Create tracking directory in user's home
+        await this.createTrackingDirectory();
 
-      // Initialize Git configuration
-      const gitPath = this.findGitExecutable();
-      const options: Partial<SimpleGitOptions> = {
-        baseDir: this.repoPath,
-        binary: gitPath,
-        maxConcurrentProcesses: 1,
-        trimmed: false,
-        unsafe: {
-          allowUnsafeCustomBinary: true,
-        },
-      };
+        // Initialize Git only in tracking directory
+        const options: Partial<SimpleGitOptions> = {
+          baseDir: this.currentTrackingDir,
+          binary: this.findGitExecutable(),
+          maxConcurrentProcesses: 1,
+        };
 
-      // Initialize Git instance with basic options
-      this.git = simpleGit(options);
+        this.git = simpleGit(options);
 
-      // Verify Git configuration
-      await this.verifyGitConfig().catch(async (error) => {
-        // If config verification fails, try to initialize it
-        await this.initGitConfig().catch((configError) => {
-          this.outputChannel.appendLine(
-            `DevTrack: Failed to initialize Git config: ${configError}`
-          );
-          throw configError;
-        });
-      });
-
-      // Check if directory is a Git repository
-      const isRepo = await this.git.checkIsRepo();
-      if (!isRepo) {
-        // If not a repo, initialize it
-        this.outputChannel.appendLine(
-          'DevTrack: Directory is not a Git repository. Initializing...'
-        );
-
-        try {
+        // Check if tracking repo is already initialized
+        const isRepo = await this.git.checkIsRepo();
+        if (!isRepo) {
           await this.git.init();
-          await this.git.addConfig(
-            'user.name',
-            'DevTrack User',
-            false,
-            'local'
-          );
+          await this.git.addConfig('user.name', 'DevTrack', false, 'local');
           await this.git.addConfig(
             'user.email',
             'devtrack@example.com',
@@ -267,49 +335,27 @@ export class GitService extends EventEmitter {
             'local'
           );
 
-          // Create initial commit to establish main branch
-          await this.git.add('.');
-          await this.git.commit('DevTrack: Initial commit', {
-            '--allow-empty': null,
+          // Create initial metadata
+          await this.updateTrackingMetadata({
+            projectPath: vscode.workspace.workspaceFolders![0].uri.fsPath,
+            lastSync: new Date().toISOString(),
+            changes: [],
           });
 
-          this.outputChannel.appendLine(
-            'DevTrack: Successfully initialized Git repository'
-          );
-        } catch (initError: any) {
-          this.outputChannel.appendLine(
-            `DevTrack: Failed to initialize repository: ${initError.message}`
-          );
-          throw new Error(
-            `Failed to initialize Git repository: ${initError.message}`
-          );
+          await this.git.add('.');
+          await this.git.commit('DevTrack: Initialize tracking');
         }
+
+        this.outputChannel.appendLine(
+          'DevTrack: Tracking repository initialized in home directory'
+        );
+      } catch (error: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Failed to initialize tracking - ${error.message}`
+        );
+        throw error;
       }
-
-      // Setup platform-specific configurations
-      if (this.isWindows) {
-        await this.git.addConfig('core.autocrlf', 'true', false, 'local');
-      } else {
-        await this.git.addConfig('core.autocrlf', 'input', false, 'local');
-      }
-
-      this.outputChannel.appendLine(
-        'DevTrack: Workspace initialized successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.outputChannel.appendLine(
-        `DevTrack: Workspace initialization error - ${errorMessage}`
-      );
-
-      // Show a more user-friendly error message
-      vscode.window.showErrorMessage(
-        `DevTrack: Failed to initialize workspace. ${errorMessage}. Please ensure Git is installed and you have appropriate permissions.`
-      );
-
-      throw error;
-    }
+    });
   }
 
   private async getGitVersion(): Promise<string> {
@@ -346,7 +392,7 @@ export class GitService extends EventEmitter {
             this.outputChannel.appendLine(
               `DevTrack: Found Git in PATH at ${gitExePath}`
             );
-            return gitExePath;
+            return 'git';
           }
         }
 
@@ -433,7 +479,7 @@ export class GitService extends EventEmitter {
 
   private async cleanupGitLocks(): Promise<void> {
     try {
-      const gitDir = path.join(this.repoPath, '.git');
+      const gitDir = path.join(this.currentTrackingDir, '.git');
       const lockFiles = ['index.lock', 'HEAD.lock'];
 
       for (const lockFile of lockFiles) {
@@ -581,189 +627,133 @@ export class GitService extends EventEmitter {
     throw lastError;
   }
 
-  public async initializeRepo(remoteUrl: string): Promise<void> {
+  private async updateTrackingMetadata(
+    data: Partial<TrackingMetadata>
+  ): Promise<void> {
+    const metadataPath = path.join(this.currentTrackingDir, 'tracking.json');
+    let metadata: TrackingMetadata;
+
+    try {
+      if (fs.existsSync(metadataPath)) {
+        metadata = JSON.parse(await fs.promises.readFile(metadataPath, 'utf8'));
+      } else {
+        metadata = {
+          projectPath: '',
+          lastSync: new Date().toISOString(),
+          changes: [],
+        };
+      }
+
+      metadata = { ...metadata, ...data };
+      await fs.promises.writeFile(
+        metadataPath,
+        JSON.stringify(metadata, null, 2)
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(
+        'DevTrack: Failed to update tracking metadata'
+      );
+    }
+  }
+
+  public async recordChanges(
+    message: string,
+    changedFiles: string[]
+  ): Promise<void> {
+    if (!this.currentTrackingDir) {
+      await this.initializeTracking();
+    }
+
     return this.enqueueOperation(async () => {
       try {
-        // Verify Git installation and configuration first
-        await this.verifyGitConfig();
+        // Create a change record
+        const change = {
+          timestamp: new Date().toISOString(),
+          files: changedFiles,
+          summary: message,
+        };
 
-        if (!this.git) {
-          throw new Error('Git not initialized');
+        // Update metadata with new change
+        const metadataPath = path.join(
+          this.currentTrackingDir,
+          'tracking.json'
+        );
+        const metadata: TrackingMetadata = JSON.parse(
+          await fs.promises.readFile(metadataPath, 'utf8')
+        );
+
+        metadata.changes = metadata.changes || [];
+        metadata.changes.push(change);
+        metadata.lastSync = change.timestamp;
+
+        // Save updated metadata
+        await fs.promises.writeFile(
+          metadataPath,
+          JSON.stringify(metadata, null, 2)
+        );
+
+        // Commit change to tracking repository
+        if (this.git) {
+          await this.git.add('.');
+          await this.git.commit(message);
         }
 
-        // Clean up any existing Git state safely
-        await this.cleanupGitLocks();
-
-        if (!this.isWindows) {
-          try {
-            // Check write permissions in repository directory
-            await fs.promises.access(this.repoPath, fs.constants.W_OK);
-
-            // Check if .git directory exists and is writable
-            const gitDir = path.join(this.repoPath, '.git');
-            if (fs.existsSync(gitDir)) {
-              await fs.promises.access(gitDir, fs.constants.W_OK);
-            }
-          } catch (error: any) {
-            throw new Error(
-              `Permission denied: Unable to write to repository directory. Please check folder permissions: ${error.message}`
-            );
-          }
-        }
-
-        await this.withRetry(async () => {
-          const isRepo = await this.git.checkIsRepo();
-
-          if (!isRepo) {
-            // On Linux, explicitly set init.defaultBranch
-            if (!this.isWindows) {
-              await this.git.addConfig(
-                'init.defaultBranch',
-                'main',
-                false,
-                'local'
-              );
-            }
-            await this.git.init();
-            this.outputChannel.appendLine(
-              'DevTrack: Initialized new Git repository.'
-            );
-          }
-        });
-
-        await this.withRetry(async () => {
-          const isRepo = await this.git.checkIsRepo();
-
-          if (!isRepo) {
-            await this.git.init();
-            this.outputChannel.appendLine(
-              'DevTrack: Initialized new Git repository.'
-            );
-          }
-
-          // Ensure we're on main branch
-          try {
-            const branches = await this.git.branchLocal();
-
-            if (!branches.all.includes('main')) {
-              // Create and checkout main if it doesn't exist
-              await this.git.checkoutLocalBranch('main');
-            } else if (branches.current !== 'main') {
-              // Switch to main if we're on a different branch
-              await this.git.checkout('main');
-            }
-          } catch (error) {
-            // If branch operations fail, create main branch fresh
-            await this.git.checkout(['-B', 'main']);
-          }
-
-          // Stage and commit any existing files
-          const status = await this.git.status();
-
-          if (
-            status.files.length > 0 ||
-            !status.staged.length ||
-            status.not_added.length > 0
-          ) {
-            await this.git.add('.');
-            const hasChanges = (await this.git.status()).files.length > 0;
-
-            if (hasChanges) {
-              await this.git.commit(
-                'DevTrack: Initial commit with existing project files'
-              );
-            }
-          }
-        });
-
-        // Configure remotes with force
-        await this.withRetry(async () => {
-          const remotes = await this.git.getRemotes(true);
-          if (remotes.find((remote) => remote.name === 'origin')) {
-            await this.git.removeRemote('origin');
-          }
-          await this.git.addRemote('origin', remoteUrl);
-        });
-
-        // Ensure main branch exists
-        await this.withRetry(async () => {
-          const branches = await this.git.branchLocal();
-          if (!branches.current || branches.current !== 'main') {
-            try {
-              await this.git.checkoutLocalBranch('main');
-            } catch (error) {
-              await this.git.checkout(['-b', 'main']);
-            }
-          }
-        });
-
-        // Push to remote with proper error handling
-        await this.withRetry(async () => {
-          const remotes = await this.git.getRemotes(true);
-          if (remotes.find((remote) => remote.name === 'origin')) {
-            await this.git.removeRemote('origin');
-          }
-          await this.git.addRemote('origin', remoteUrl);
-        });
-
-        // Push to remote with proper error handling
-        await this.withRetry(async () => {
-          try {
-            // Ensure we have commits before pushing
-            const commits = await this.git.log(['--oneline']);
-            if (!commits.total) {
-              // Create an empty commit if no commits exist
-              await this.git.commit('DevTrack: Initial commit', {
-                '--allow-empty': null,
-              });
-            }
-
-            // Now push with upstream tracking
-            await this.git.push(['-u', 'origin', 'main']);
-          } catch (error: any) {
-            if (error.message.includes('rejected')) {
-              // Handle case where remote exists but we can't push
-              await this.git.fetch('origin');
-              await this.git.pull(['--rebase=true', 'origin', 'main']);
-              await this.git.push(['--force-with-lease', 'origin', 'main']);
-            } else if (
-              error.message.includes('src refspec main does not match any')
-            ) {
-              // Handle case where main branch isn't properly initialized
-              await this.git.checkout(['-B', 'main']);
-              await this.git.commit('DevTrack: Initialize main branch', {
-                '--allow-empty': null,
-              });
-              await this.git.push(['-u', 'origin', 'main']);
-            } else {
-              throw error;
-            }
-          }
-        });
+        this.outputChannel.appendLine(
+          'DevTrack: Changes recorded successfully'
+        );
       } catch (error: any) {
-        if (!this.isWindows && error.message.includes('Permission denied')) {
-          this.outputChannel.appendLine(
-            'DevTrack: Permission error detected on Linux system'
-          );
-          this.outputChannel.appendLine(`Repository path: ${this.repoPath}`);
-          this.outputChannel.appendLine(
-            `User home directory: ${process.env.HOME}`
-          );
-          // Log current user's Git configuration location
-          try {
-            const { stdout } = await execAsync(
-              'git config --list --show-origin'
-            );
-            this.outputChannel.appendLine('Git config locations:');
-            this.outputChannel.appendLine(stdout);
-          } catch (configError) {
-            this.outputChannel.appendLine(
-              `Error getting Git config: ${configError}`
-            );
-          }
+        this.outputChannel.appendLine(
+          `DevTrack: Failed to record changes - ${error.message}`
+        );
+        throw error;
+      }
+    });
+  }
+
+  public async commitChanges(message: string, changes: any[]): Promise<void> {
+    return this.enqueueOperation(async () => {
+      try {
+        if (!this.git) {
+          throw new Error('Tracking repository not initialized');
         }
 
-        this.handleGitError(error);
+        // Create change snapshot
+        const snapshotPath = path.join(this.currentTrackingDir, 'changes');
+        if (!fs.existsSync(snapshotPath)) {
+          await fs.promises.mkdir(snapshotPath, { recursive: true });
+        }
+
+        // Save change data
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const snapshotFile = path.join(
+          snapshotPath,
+          `changes-${timestamp}.json`
+        );
+        await fs.promises.writeFile(
+          snapshotFile,
+          JSON.stringify({ message, changes }, null, 2)
+        );
+
+        // Update tracking metadata
+        await this.updateTrackingMetadata({
+          lastCommit: {
+            message,
+            timestamp,
+            changesCount: changes.length,
+          },
+        });
+
+        // Commit to tracking repository
+        await this.git.add('.');
+        await this.git.commit(message);
+
+        this.outputChannel.appendLine(
+          'DevTrack: Changes committed to tracking repository'
+        );
+      } catch (error: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Commit failed - ${error.message}`
+        );
         throw error;
       }
     });
@@ -837,13 +827,27 @@ export class GitService extends EventEmitter {
     return this.listenerCount(event) > 0;
   }
 
-  // Add cleanup method
+  public async cleanup(): Promise<void> {
+    if (this.currentTrackingDir && fs.existsSync(this.currentTrackingDir)) {
+      try {
+        await fs.promises.rm(this.currentTrackingDir, {
+          recursive: true,
+          force: true,
+        });
+        this.outputChannel.appendLine(
+          'DevTrack: Tracking directory cleaned up'
+        );
+      } catch (error) {
+        this.outputChannel.appendLine(
+          'DevTrack: Failed to clean up tracking directory'
+        );
+      }
+    }
+  }
+
   public dispose(): void {
     this.removeAllListeners();
-    if (this.git) {
-      // Cleanup any ongoing git operations
-      this.operationQueue = Promise.resolve();
-    }
-    this.outputChannel.appendLine('DevTrack: GitService disposed');
+    this.operationQueue = Promise.resolve();
+    this.cleanup().catch(() => {});
   }
 }

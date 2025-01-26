@@ -15,10 +15,12 @@ export class Tracker extends EventEmitter {
   private watcher!: vscode.FileSystemWatcher;
   private excludePatterns: string[] = [];
   private outputChannel: OutputChannel;
+  private trackingDir: string;
 
-  constructor(outputChannel: OutputChannel) {
+  constructor(outputChannel: OutputChannel, trackingDir: string) {
     super();
     this.outputChannel = outputChannel;
+    this.trackingDir = trackingDir;
     this.initializeWatcher();
   }
 
@@ -26,9 +28,16 @@ export class Tracker extends EventEmitter {
     const config = vscode.workspace.getConfiguration('devtrack');
     this.excludePatterns = config.get<string[]>('exclude') || [];
 
-    // Create file system watcher
+    // Create a workspace folder from the tracking directory
+    const trackingWorkspaceFolder = {
+      uri: vscode.Uri.file(this.trackingDir),
+      name: 'DevTrack',
+      index: 0,
+    };
+
+    // Use the workspace folder with RelativePattern
     this.watcher = vscode.workspace.createFileSystemWatcher(
-      '**/*',
+      new vscode.RelativePattern(trackingWorkspaceFolder, '**/*'),
       false, // Don't ignore creates
       false, // Don't ignore changes
       false // Don't ignore deletes
@@ -39,23 +48,27 @@ export class Tracker extends EventEmitter {
     this.watcher.onDidCreate((uri) => this.handleChange(uri, 'added'));
     this.watcher.onDidDelete((uri) => this.handleChange(uri, 'deleted'));
 
-    this.outputChannel.appendLine('DevTrack: File system watcher initialized.');
+    this.outputChannel.appendLine(
+      'DevTrack: File system watcher initialized for tracking directory.'
+    );
   }
 
   private handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
     try {
+      // Only process files within the tracking directory
+      if (!uri.fsPath.startsWith(this.trackingDir)) {
+        return;
+      }
+
       const relativePath = vscode.workspace.asRelativePath(uri);
 
-      // Check if file should be excluded
+      // Check exclusions
       const isExcluded = this.excludePatterns.some((pattern) =>
         minimatch(relativePath, pattern)
       );
 
       if (!isExcluded) {
-        // Get file extension
         const fileExt = uri.fsPath.split('.').pop()?.toLowerCase();
-
-        // Only track source code files and specific file types
         const trackedExtensions = [
           'ts',
           'js',
@@ -81,31 +94,28 @@ export class Tracker extends EventEmitter {
           'yml',
           'yaml',
         ];
-
-        if (fileExt && trackedExtensions.includes(fileExt)) {
-          const key = uri.fsPath;
-
-          // Check if this is a meaningful change
-          const existingChange = this.changes.get(key);
-          if (existingChange) {
-            // If the file was previously deleted and now added, keep as added
-            if (existingChange.type === 'deleted' && type === 'added') {
-              type = 'added';
-            }
-            // If the file was previously added and modified, keep as added
-            else if (existingChange.type === 'added' && type === 'changed') {
-              type = 'added';
-            }
+        // Check if this is a meaningful change
+        const existingChange = this.changes.get(uri.fsPath);
+        if (existingChange) {
+          // If the file was previously deleted and now added, keep as added
+          if (existingChange.type === 'deleted' && type === 'added') {
+            type = 'added';
           }
+          // If the file was previously added and modified, keep as added
+          else if (existingChange.type === 'added' && type === 'changed') {
+            type = 'added';
+          }
+        }
 
-          // Update or add the change
+        // Update or add the change
+        if (fileExt && trackedExtensions.includes(fileExt)) {
           const change: Change = {
             uri,
             timestamp: new Date(),
             type,
           };
 
-          this.changes.set(key, change);
+          this.changes.set(uri.fsPath, change);
           this.emit('change', change);
 
           this.outputChannel.appendLine(

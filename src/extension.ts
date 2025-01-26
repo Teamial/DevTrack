@@ -481,11 +481,23 @@ function createBaseServices(
   outputChannel: vscode.OutputChannel,
   context: vscode.ExtensionContext
 ): DevTrackServices {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const defaultTrackingDir = path.join(
+    homeDir,
+    '.devtrack',
+    'tracking',
+    'default'
+  );
+
+  // Ensure the directory exists
+  if (!fs.existsSync(defaultTrackingDir)) {
+    fs.mkdirSync(defaultTrackingDir, { recursive: true });
+  }
   return {
     outputChannel,
     githubService: new GitHubService(outputChannel),
     gitService: new GitService(outputChannel),
-    tracker: new Tracker(outputChannel),
+    tracker: new Tracker(outputChannel, defaultTrackingDir), // Fixed: Added trackingDir argument
     summaryGenerator: new SummaryGenerator(outputChannel, context),
     scheduler: null,
     trackingStatusBar: createStatusBarItem('tracking'),
@@ -494,6 +506,8 @@ function createBaseServices(
   };
 }
 
+// In extension.ts
+
 async function initializeServices(
   context: vscode.ExtensionContext
 ): Promise<DevTrackServices | null> {
@@ -501,17 +515,52 @@ async function initializeServices(
   context.subscriptions.push(outputChannel);
   outputChannel.appendLine('DevTrack: Extension activated.');
 
+  // Create home directory tracking base if it doesn't exist
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  if (!homeDir) {
+    outputChannel.appendLine('DevTrack: Unable to determine home directory');
+    return null;
+  }
+
+  const trackingBase = path.join(homeDir, '.devtrack', 'tracking');
+  try {
+    await fs.promises.mkdir(trackingBase, { recursive: true });
+  } catch (error) {
+    outputChannel.appendLine(
+      `DevTrack: Failed to create tracking directory - ${error}`
+    );
+    return null;
+  }
+
   // Early check for workspace
   if (!vscode.workspace.workspaceFolders?.length) {
     outputChannel.appendLine('DevTrack: No workspace folder open.');
-    return createBaseServices(outputChannel, context); // Create minimal services
+    // Also update the base services creation to include trackingDir
+    return createBaseServices(outputChannel, context);
+  }
+
+  // Create unique tracking directory for this workspace
+  const workspaceId = Buffer.from(
+    vscode.workspace.workspaceFolders[0].uri.fsPath
+  )
+    .toString('base64')
+    .replace(/[/+=]/g, '_');
+  const trackingDir = path.join(trackingBase, workspaceId);
+
+  try {
+    await fs.promises.mkdir(trackingDir, { recursive: true });
+  } catch (error) {
+    outputChannel.appendLine(
+      `DevTrack: Failed to create workspace tracking directory - ${error}`
+    );
+    return null;
   }
 
   const services: DevTrackServices = {
     outputChannel,
     githubService: new GitHubService(outputChannel),
     gitService: new GitService(outputChannel),
-    tracker: new Tracker(outputChannel),
+    tracker: new Tracker(outputChannel, trackingDir),
     summaryGenerator: new SummaryGenerator(outputChannel, context),
     scheduler: null,
     trackingStatusBar: createStatusBarItem('tracking'),
@@ -529,7 +578,6 @@ async function initializeServices(
   const authRestored = await restoreAuthenticationState(context, services);
 
   if (!authRestored) {
-    // If restoration failed, check if we should show the initial setup prompt
     const shouldPrompt = context.globalState.get(
       'devtrackShouldPromptAuth',
       true
@@ -548,11 +596,6 @@ async function initializeServices(
         await context.globalState.update('devtrackShouldPromptAuth', false);
       }
     }
-  }
-
-  // Load and validate configuration
-  if (!(await loadConfiguration(services))) {
-    return null;
   }
 
   return services;
