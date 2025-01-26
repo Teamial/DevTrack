@@ -157,6 +157,46 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async checkGitEnvironment(): Promise<void> {
+    try {
+      // Check if Git binary is in the PATH
+      const { stdout: gitVersionOutput } = await execAsync('git --version');
+      const versionMatch = gitVersionOutput.match(
+        /git version (\d+\.\d+\.\d+)/
+      );
+      if (!versionMatch) {
+        throw new Error(
+          'Unable to parse Git version. Ensure Git is installed correctly.'
+        );
+      }
+      const installedVersion = versionMatch[1];
+      this.outputChannel.appendLine(
+        `DevTrack: Detected Git version ${installedVersion}.`
+      );
+
+      // Check Git version compatibility (example: minimum version 2.30.0)
+      const [major, minor] = installedVersion.split('.').map(Number);
+      if (major < 2 || (major === 2 && minor < 30)) {
+        throw new Error(
+          `Unsupported Git version ${installedVersion}. Please install version 2.30.0 or later.`
+        );
+      }
+
+      // Check if repoPath is a valid Git repository
+      if (!fs.existsSync(path.join(this.repoPath, '.git'))) {
+        throw new Error(
+          `The specified path (${this.repoPath}) is not a valid Git repository.`
+        );
+      }
+    } catch (error: any) {
+      this.outputChannel.appendLine(
+        `DevTrack: Git environment check failed - ${error.message}`
+      );
+      this.emit('error', error);
+      throw error;
+    }
+  }
+
   private async initializeWorkspace(): Promise<void> {
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -167,22 +207,27 @@ export class GitService extends EventEmitter {
 
       this.repoPath = workspaceFolders[0].uri.fsPath;
 
-      // Get Git executable path
+      // Step 1: Get Git executable path
       const gitPath = this.findGitExecutable();
+      if (!gitPath) {
+        throw new Error(
+          'Git executable not found. Ensure Git is installed and in the PATH.'
+        );
+      }
+
       const normalizedGitPath = this.isWindows
         ? gitPath.replace(/\\/g, '/')
         : gitPath;
       this.outputChannel.appendLine(
-        `DevTrack: Using Git executable: ${gitPath}`
+        `DevTrack: Using Git executable: ${normalizedGitPath}`
       );
 
-      // Initialize Git with safe options
+      // Step 2: Initialize Git with options
       const options: Partial<SimpleGitOptions> = {
         baseDir: this.repoPath,
         binary: normalizedGitPath,
         maxConcurrentProcesses: 1,
         trimmed: false,
-        // Add the unsafe configuration for Windows paths
         unsafe: {
           allowUnsafeCustomBinary: true, // Allow spaces in Windows paths
         },
@@ -202,18 +247,61 @@ export class GitService extends EventEmitter {
 
       this.git = simpleGit(options);
 
-      // Verify the configuration
+      // Step 3: Verify Git configuration
       await this.verifyGitConfig();
-      await this.initGitConfig();
 
-      // Check Linux permissions
-      await this.verifyLinuxPermissions();
-    } catch (error) {
+      // Step 4: Validate Git version
+      const gitVersion = await this.getGitVersion();
+      if (!this.isGitVersionSupported(gitVersion)) {
+        throw new Error(
+          `Unsupported Git version ${gitVersion}. Please install version 2.30.0 or later.`
+        );
+      }
       this.outputChannel.appendLine(
-        `DevTrack: Workspace initialization error - ${error}`
+        `DevTrack: Detected Git version ${gitVersion}.`
       );
-      throw error;
+
+      // Step 5: Validate repository path
+      if (!fs.existsSync(path.join(this.repoPath, '.git'))) {
+        throw new Error(
+          `The specified path (${this.repoPath}) is not a valid Git repository.`
+        );
+      }
+
+      // Step 6: Check Linux permissions
+      await this.verifyLinuxPermissions();
+
+      this.outputChannel.appendLine(
+        'DevTrack: Workspace initialized successfully.'
+      );
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.outputChannel.appendLine(
+        `DevTrack: Workspace initialization error - ${errorMessage}`
+      );
+      throw error; // Re-throwing the error after logging
     }
+  }
+
+  private async getGitVersion(): Promise<string> {
+    try {
+      const { stdout } = await execAsync('git --version');
+      const match = stdout.match(/git version (\d+\.\d+\.\d+)/);
+      if (!match) {
+        throw new Error('Unable to determine Git version.');
+      }
+      return match[1];
+    } catch (error) {
+      throw new Error(
+        'Failed to retrieve Git version. Ensure Git is installed and accessible.'
+      );
+    }
+  }
+
+  private isGitVersionSupported(version: string): boolean {
+    const [major, minor] = version.split('.').map(Number);
+    return major > 2 || (major === 2 && minor >= 30); // Example: Minimum version is 2.30.0
   }
 
   private findGitExecutable(): string {

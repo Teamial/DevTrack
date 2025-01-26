@@ -3,63 +3,31 @@ const esbuild = require('esbuild');
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
-/**
- * @type {import('esbuild').Plugin}
- */
-const esbuildProblemMatcherPlugin = {
-  name: 'esbuild-problem-matcher',
-  setup(build) {
-    build.onStart(() => {
-      console.log('[build] Build started');
-    });
-    build.onEnd((result) => {
-      if (result.errors.length > 0) {
-        result.errors.forEach(({ text, location }) => {
-          console.log(`✘ [ERROR] ${text}`);
-          if (location) {
-            console.log(`    ${location.file}:${location.line}:${location.column}`);
-          }
-        });
-      }
-      console.log('[build] Build finished');
-    });
-  },
-};
-
-async function main() {
-  const ctx = await esbuild.context({
+async function build() {
+  const context = await esbuild.context({
     entryPoints: ['src/extension.ts'],
     bundle: true,
+    outfile: 'dist/extension.js',
+    external: ['vscode'],
     format: 'cjs',
-    minify: production,
-    sourcemap: !production,
-    sourcesContent: false,
     platform: 'node',
     target: 'node14',
-    outfile: 'dist/extension.js',
-    external: [
-      'vscode'  // Only keep vscode as external
-    ],
-    define: {
-      'process.env.NODE_ENV': production ? '"production"' : '"development"'
-    },
-    logLevel: 'silent',
-    plugins: [esbuildProblemMatcherPlugin],
+    sourcemap: !production,
+    minify: production,
     treeShaking: true,
   });
 
   if (watch) {
-    await ctx.watch();
+    await context.watch();
+    console.log('[watch] build finished, watching for changes...');
   } else {
-    const result = await ctx.rebuild();
-    if (result.errors.length > 0) {
-      console.error('Build errors:', result.errors);
-    }
-    await ctx.dispose();
+    await context.rebuild();
+    await context.dispose();
+    console.log('[build] build finished');
   }
 }
 
-main().catch(e => {
-  console.error(e);
+build().catch((err) => {
+  console.error(err);
   process.exit(1);
 });

@@ -12,6 +12,6 @@
 	  "sourceMap": true,
 	  "types": ["vscode", "mocha"] // Ensure this line is present
 	},
-	"exclude": ["node_modules", ".vscode-test"]
+	"exclude": ["node_modules", "../.vscode-test"]
   }
   
