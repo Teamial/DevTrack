@@ -14,7 +14,23 @@
     "vscode": "^1.96.0"
   },
   "categories": [
-    "Other"
+    "SCM Providers",
+    "Other",
+    "Programming Languages",
+    "Formatters",
+    "Education"
+  ],
+  "keywords": [
+    "git",
+    "tracking",
+    "productivity",
+    "automation",
+    "code-analytics",
+    "time-tracking",
+    "version-control",
+    "collaboration",
+    "github",
+    "documentation"
   ],
   "activationEvents": [
     "onStartupFinished",
