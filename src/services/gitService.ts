@@ -19,6 +19,10 @@ interface GitServiceEvents {
   retry: (operation: string, attempt: number) => void;
   push: (branch: string) => void;
 }
+interface TimeStampFormat {
+  sortable: string;
+  readable: string;
+}
 
 interface TrackingMetadata {
   projectPath: string;
@@ -553,7 +557,7 @@ export class GitService extends EventEmitter {
           const extension = path.extname(cleanFilename);
           const baseNameWithoutExt = path.basename(cleanFilename, extension);
 
-          // Create filename with timestamp: 2025-02-15-1430-45-original_name.ts
+          // Create filename with timestamp: 2025-02-15-1200-00-AM-original_name.ts
           const timestampedFilename = `${timestamp.sortable}-${baseNameWithoutExt}${extension}`;
           const filePath = path.join(changesDir, timestampedFilename);
 
@@ -615,31 +619,47 @@ export class GitService extends EventEmitter {
     });
   }
 
-  private formatTimestamp(date: Date): { sortable: string; readable: string } {
+  private formatTimestamp(date: Date): TimeStampFormat {
     const pad = (num: number): string => num.toString().padStart(2, '0');
 
-    // Get local date/time components
+    // Format time in 12-hour format with AM/PM
+    const formatTime = (date: Date): string => {
+      let hours = date.getHours();
+      const minutes = date.getMinutes();
+      const seconds = date.getSeconds();
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+
+      // Convert to 12-hour format
+      hours = hours % 12;
+      hours = hours ? hours : 12; // the hour '0' should be '12'
+
+      return `${pad(hours)}${pad(minutes)}-${pad(seconds)}-${ampm}`;
+    };
+
+    // Get local date components
     const year = date.getFullYear();
     const month = pad(date.getMonth() + 1);
     const day = pad(date.getDate());
-    const hours = pad(date.getHours());
-    const minutes = pad(date.getMinutes());
-    const seconds = pad(date.getSeconds());
 
     // Get timezone
     const timezone = date
       .toLocaleTimeString('en-us', { timeZoneName: 'short' })
       .split(' ')[2];
 
-    // For file name (using hyphen separator for better readability)
-    const sortableTimestamp = `${year}-${month}-${day}-${hours}${minutes}-${seconds}`;
+    // For file name (now includes AM/PM)
+    const sortableTimestamp = `${year}-${month}-${day}-${formatTime(date)}`;
 
     // For commit message (human readable with timezone)
     const readableTimestamp = `${date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
-    })} at ${hours}:${minutes}:${seconds} ${timezone}`;
+    })} at ${date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    })} ${timezone}`;
 
     return {
       sortable: sortableTimestamp,
