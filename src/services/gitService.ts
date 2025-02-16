@@ -339,62 +339,6 @@ export class GitService extends EventEmitter {
     }
   }
 
-  public async commitAndPush(message: string): Promise<void> {
-    return this.enqueueOperation(async () => {
-      try {
-        if (!this.git) {
-          throw new Error('Git not initialized');
-        }
-
-        this.emitSafe('operation:start', 'commitAndPush');
-
-        await this.withRetry(async () => {
-          // Get current branch
-          const branches = await this.git.branch();
-          const currentBranch = branches.current;
-
-          // Stage all tracked files
-          await this.git.add('.');
-
-          // Commit with the enhanced message from summaryGenerator
-          // This will include timestamp, changes, and code snippets
-          await this.git.commit(message);
-          this.emitSafe('commit', message);
-
-          try {
-            // Push with force-with-lease to ensure we don't overwrite others' changes
-            await this.git.push([
-              'origin',
-              currentBranch,
-              '--force-with-lease',
-            ]);
-            this.emitSafe('push', currentBranch);
-          } catch (pushError: any) {
-            if (pushError.message.includes('no upstream branch')) {
-              await this.setupRemoteTracking();
-              // Try push again after setting upstream
-              await this.git.push([
-                'origin',
-                currentBranch,
-                '--force-with-lease',
-              ]);
-            } else {
-              throw pushError;
-            }
-          }
-        });
-
-        this.emitSafe('operation:end', 'commitAndPush');
-      } catch (error: any) {
-        this.outputChannel.appendLine(
-          `DevTrack: Git commit failed - ${error.message}`
-        );
-        this.emitSafe('error', error);
-        throw error;
-      }
-    });
-  }
-
   private async updateTrackingMetadata(
     data: Partial<TrackingMetadata>
   ): Promise<void> {
@@ -434,24 +378,16 @@ export class GitService extends EventEmitter {
         // Create tracking directory in user's home
         await this.createTrackingDirectory();
 
-        // Create changes directory
-        const changesDir = path.join(this.currentTrackingDir, 'changes');
-        if (!fs.existsSync(changesDir)) {
-          await fs.promises.mkdir(changesDir, { recursive: true });
-        }
-
-        // Create a .gitignore file
+        // Create a .gitignore file that allows our summaries to be tracked
         const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
         const gitignoreContent = `
-  # Ignore everything by default
-  *
-  **/*
+  # DevTrack - Track only specific files
+  .DS_Store
+  node_modules/
+  .vscode/
+  *.log
   
-  # Track only specific files
-  !tracking.json
-  !changes/
-  !changes/*.json
-  !.gitignore
+  # Keep everything else to ensure summaries are tracked
   `;
         await fs.promises.writeFile(gitignorePath, gitignoreContent);
 
@@ -475,16 +411,13 @@ export class GitService extends EventEmitter {
             'local'
           );
 
-          // Create initial metadata
-          await this.updateTrackingMetadata({
-            projectPath: vscode.workspace.workspaceFolders![0].uri.fsPath,
-            lastSync: new Date().toISOString(),
-            changes: [],
-          });
+          // Create a placeholder README.md
+          const readmePath = path.join(this.currentTrackingDir, 'README.md');
+          const readmeContent = `# DevTrack Coding History\n\nThis repository contains your coding activity tracked by DevTrack.\n\nStarted tracking on: ${new Date().toISOString()}\n`;
+          await fs.promises.writeFile(readmePath, readmeContent);
 
-          // Only add specific files
-          await this.git.add('.gitignore');
-          await this.git.add('tracking.json');
+          // Initialize with README and .gitignore
+          await this.git.add(['.gitignore', 'README.md']);
           await this.git.commit('DevTrack: Initialize tracking');
         }
 
@@ -567,9 +500,85 @@ export class GitService extends EventEmitter {
     }
   }
 
-  private isGitVersionSupported(version: string): boolean {
-    const [major, minor] = version.split('.').map(Number);
-    return major > 2 || (major === 2 && minor >= 30); // Example: Minimum version is 2.30.0
+  private async verifyCommitTracking(message: string): Promise<void> {
+    try {
+      // Check if the commit was actually saved
+      const log = await this.git.log({ maxCount: 1 });
+
+      if (log.latest?.message !== message) {
+        this.outputChannel.appendLine(
+          'DevTrack: Warning - Last commit message does not match expected message'
+        );
+        this.outputChannel.appendLine(`Expected: ${message}`);
+        this.outputChannel.appendLine(
+          `Actual: ${log.latest?.message || 'No commit found'}`
+        );
+      } else {
+        this.outputChannel.appendLine(
+          'DevTrack: Successfully verified commit was tracked'
+        );
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error verifying commit - ${error}`
+      );
+    }
+  }
+
+  public async commitAndPush(message: string): Promise<void> {
+    return this.enqueueOperation(async () => {
+      try {
+        if (!this.git) {
+          throw new Error('Git not initialized');
+        }
+
+        this.emitSafe('operation:start', 'commitAndPush');
+
+        await this.withRetry(async () => {
+          // Get current branch
+          const branches = await this.git.branch();
+          const currentBranch = branches.current;
+
+          // Stage all tracked files
+          await this.git.add('.');
+
+          // Commit with the enhanced message from summaryGenerator
+          // This will include timestamp, changes, and code snippets
+          await this.git.commit(message);
+          this.emitSafe('commit', message);
+
+          try {
+            // Push with force-with-lease to ensure we don't overwrite others' changes
+            await this.git.push([
+              'origin',
+              currentBranch,
+              '--force-with-lease',
+            ]);
+            this.emitSafe('push', currentBranch);
+          } catch (pushError: any) {
+            if (pushError.message.includes('no upstream branch')) {
+              await this.setupRemoteTracking();
+              // Try push again after setting upstream
+              await this.git.push([
+                'origin',
+                currentBranch,
+                '--force-with-lease',
+              ]);
+            } else {
+              throw pushError;
+            }
+          }
+        });
+
+        this.emitSafe('operation:end', 'commitAndPush');
+      } catch (error: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Git commit failed - ${error.message}`
+        );
+        this.emitSafe('error', error);
+        throw error;
+      }
+    });
   }
 
   private findGitExecutable(): string {
