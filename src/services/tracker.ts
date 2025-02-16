@@ -29,15 +29,15 @@ export class Tracker extends EventEmitter {
     this.excludePatterns = config.get<string[]>('exclude') || [];
 
     // Create a workspace folder from the tracking directory
-    const trackingWorkspaceFolder = {
-      uri: vscode.Uri.file(this.trackingDir),
-      name: 'DevTrack',
-      index: 0,
-    };
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      this.outputChannel.appendLine('DevTrack: No workspace folders found.');
+      return;
+    }
 
     // Use the workspace folder with RelativePattern
     this.watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(trackingWorkspaceFolder, '**/*'),
+      new vscode.RelativePattern(workspaceFolders[0], '**/*'),
       false, // Don't ignore creates
       false, // Don't ignore changes
       false // Don't ignore deletes
