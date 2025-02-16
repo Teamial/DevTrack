@@ -528,6 +528,63 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private formatTimestamp(date: Date): { sortable: string; readable: string } {
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    const pad = (num: number): string => num.toString().padStart(2, '0');
+
+    // Get local date/time components
+    const month = months[date.getMonth()];
+    const day = pad(date.getDate());
+    const year = date.getFullYear();
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    const seconds = pad(date.getSeconds());
+
+    // Get timezone offset
+    const timezone = date
+      .toLocaleTimeString('en-us', { timeZoneName: 'short' })
+      .split(' ')[2];
+
+    // For file name (maintain chronological sorting)
+    const sortableTimestamp = `${year}-${pad(date.getMonth() + 1)}-${day}-${hours}-${minutes}-${seconds}`;
+
+    // For commit message (human readable with timezone)
+    const readableTimestamp = `${month} ${day}, ${year} at ${hours}:${minutes}:${seconds} ${timezone}`;
+
+    return {
+      sortable: sortableTimestamp,
+      readable: readableTimestamp,
+    };
+  }
+
+  private formatCodeSnippet(filename: string, code: string): string {
+    return `
+  =============================================================
+  📄 ${filename}
+  =============================================================
+  
+  \`\`\`
+  ${code}
+  \`\`\`
+  
+  -------------------------------------------------------------
+  `;
+  }
+
   public async commitAndPush(message: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
@@ -541,10 +598,37 @@ export class GitService extends EventEmitter {
           await fs.promises.mkdir(changesDir, { recursive: true });
         }
 
-        // Create a timestamped file with the changes
-        const timestamp = new Date().toISOString().replace(/:/g, '-');
-        const changeFile = path.join(changesDir, `${timestamp}.txt`);
-        await fs.promises.writeFile(changeFile, message);
+        // Format the timestamp
+        const timestamp = this.formatTimestamp(new Date());
+
+        // Create the change file with sortable name
+        const changeFile = path.join(changesDir, `${timestamp.sortable}.txt`);
+
+        // Update the message with readable timestamp and enhanced code formatting
+        let updatedMessage = message.replace(
+          /DevTrack Update - [0-9T:.-Z]+/,
+          `DevTrack Update - ${timestamp.readable}`
+        );
+
+        // Enhance code snippet formatting
+        if (updatedMessage.includes('Code Snippets:')) {
+          const parts = updatedMessage.split('Code Snippets:');
+          const preSnippets = parts[0];
+          let snippets = parts[1];
+
+          // Find and format each code block
+          const codeBlockRegex = /```\n(.*?):\n([\s\S]*?)```/g;
+          snippets = snippets.replace(
+            codeBlockRegex,
+            (match, filename, code) => {
+              return this.formatCodeSnippet(filename.trim(), code.trim());
+            }
+          );
+
+          updatedMessage = `${preSnippets}Code Snippets:${snippets}`;
+        }
+
+        await fs.promises.writeFile(changeFile, updatedMessage);
 
         this.emitSafe('operation:start', 'commitAndPush');
 
@@ -556,8 +640,8 @@ export class GitService extends EventEmitter {
           await this.git.add(changeFile);
 
           // Commit with the enhanced message
-          await this.git.commit(message);
-          this.emitSafe('commit', message);
+          await this.git.commit(updatedMessage);
+          this.emitSafe('commit', updatedMessage);
 
           try {
             await this.git.push([
