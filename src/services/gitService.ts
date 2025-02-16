@@ -37,6 +37,7 @@ interface TrackingMetadata {
 export class GitService extends EventEmitter {
   private git!: SimpleGit;
   private repoPath!: string;
+  private currentTrackingDir: string = '';
   private outputChannel: OutputChannel;
   private operationQueue: Promise<any> = Promise.resolve();
   private static MAX_RETRIES = 3;
@@ -50,7 +51,7 @@ export class GitService extends EventEmitter {
 
   // Store tracking data in user's home directory to avoid project interference
   private readonly baseTrackingDir: string;
-  private currentTrackingDir: string = '';
+  // private currentTrackingDir: string = '';
   private projectIdentifier: string = '';
 
   constructor(outputChannel: OutputChannel) {
@@ -352,50 +353,16 @@ export class GitService extends EventEmitter {
           const branches = await this.git.branch();
           const currentBranch = branches.current;
 
-          // Ensure changes directory exists
-          const changesDir = path.join(this.currentTrackingDir, 'changes');
-          if (!fs.existsSync(changesDir)) {
-            await fs.promises.mkdir(changesDir, { recursive: true });
-          }
+          // Stage all tracked files
+          await this.git.add('.');
 
-          // Create a new change record
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          const changeFile = path.join(changesDir, `change-${timestamp}.json`);
-          await fs.promises.writeFile(
-            changeFile,
-            JSON.stringify(
-              {
-                timestamp,
-                message,
-                type: 'commit',
-              },
-              null,
-              2
-            )
-          );
-
-          // Stage specific files
-          await this.git.add('tracking.json');
-          await this.git.add('.gitignore');
-
-          // Add all files in changes directory
-          const changesPattern = path.join('changes', '*.json');
-          try {
-            await this.git.add(changesPattern);
-          } catch (error) {
-            this.outputChannel.appendLine(
-              `DevTrack: No existing change files to add: ${error}`
-            );
-            // This is okay - might be first commit
-          }
-
-          // Commit changes
+          // Commit with the enhanced message from summaryGenerator
+          // This will include timestamp, changes, and code snippets
           await this.git.commit(message);
           this.emitSafe('commit', message);
 
           try {
             // Push with force-with-lease to ensure we don't overwrite others' changes
-            // but also don't pull their changes into our workspace
             await this.git.push([
               'origin',
               currentBranch,

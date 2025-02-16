@@ -18,39 +18,71 @@ export class SummaryGenerator {
     this.projectContext = new ProjectContext(outputChannel, extensionContext);
   }
 
-  private async getFileChanges(change: Change): Promise<string> {
+  private async getFileContent(uri: vscode.Uri): Promise<string> {
+    try {
+      const document = await vscode.workspace.openTextDocument(uri);
+      return document.getText();
+    } catch (error) {
+      this.outputChannel.appendLine(`Error reading file content: ${error}`);
+      return '';
+    }
+  }
+
+  private async getFileChanges(
+    change: Change
+  ): Promise<{ details: string; snippet: string }> {
     try {
       const oldUri = change.type === 'added' ? undefined : change.uri;
       const newUri = change.type === 'deleted' ? undefined : change.uri;
 
       if (!oldUri && !newUri) {
-        return '';
+        return { details: '', snippet: '' };
       }
 
       const gitExt = vscode.extensions.getExtension('vscode.git');
       if (!gitExt) {
-        return '';
+        return { details: '', snippet: '' };
       }
 
       const git = gitExt.exports.getAPI(1);
       if (!git.repositories.length) {
-        return '';
+        return { details: '', snippet: '' };
       }
 
       const repo = git.repositories[0];
-
-      // Get the diff for the file
       const diff = await repo.diff(oldUri, newUri);
-      return this.parseDiff(diff, path.basename(change.uri.fsPath));
+      const parsedChanges = await this.parseDiff(diff, change.uri);
+
+      // Get the current content of the file for the snippet
+      const currentContent =
+        change.type !== 'deleted' ? await this.getFileContent(change.uri) : '';
+
+      return {
+        details: parsedChanges,
+        snippet: this.formatCodeSnippet(
+          currentContent,
+          path.basename(change.uri.fsPath)
+        ),
+      };
     } catch (error) {
       this.outputChannel.appendLine(`Error getting file changes: ${error}`);
-      return '';
+      return { details: '', snippet: '' };
     }
   }
 
-  private parseDiff(diff: string, filename: string): string {
+  private formatCodeSnippet(content: string, filename: string): string {
+    // Only include up to 50 lines of code to keep commits reasonable
+    const lines = content.split('\n').slice(0, 50);
+    if (content.split('\n').length > 50) {
+      lines.push('... (truncated for brevity)');
+    }
+
+    return `\`\`\`\n${filename}:\n${lines.join('\n')}\n\`\`\``;
+  }
+
+  private parseDiff(diff: string, uri: vscode.Uri): string {
     if (!diff) {
-      return filename;
+      return path.basename(uri.fsPath);
     }
 
     const lines = diff.split('\n');
@@ -67,12 +99,10 @@ export class SummaryGenerator {
     let currentFunction = '';
 
     for (const line of lines) {
-      // Skip empty lines and comments
       if (!line.trim() || line.match(/^[\+\-]\s*\/\//)) {
         continue;
       }
 
-      // Function/method/class detection
       const functionMatch = line.match(
         /^([\+\-])\s*(async\s+)?((function|class|const|let|var)\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)/
       );
@@ -86,19 +116,16 @@ export class SummaryGenerator {
           changes.removed.add(name);
         }
 
-        // If both added and removed, it's a modification
         if (changes.added.has(name) && changes.removed.has(name)) {
           changes.modified.add(name);
           changes.added.delete(name);
           changes.removed.delete(name);
         }
-
-        continue;
       }
     }
 
-    // Build change description
     const descriptions: string[] = [];
+    const filename = path.basename(uri.fsPath);
 
     if (changes.modified.size > 0) {
       descriptions.push(`modified ${Array.from(changes.modified).join(', ')}`);
@@ -117,46 +144,41 @@ export class SummaryGenerator {
 
   async generateSummary(changedFiles: Change[]): Promise<string> {
     try {
-      // Get detailed file changes
-      const fileChanges = await Promise.all(
-        changedFiles.map((change) => this.getFileChanges(change))
-      );
+      const timestamp = new Date().toISOString();
+      let summary = `DevTrack Update - ${timestamp}\n\n`;
 
-      const significantChanges = fileChanges.filter(Boolean);
-      const context = this.projectContext.getContextForSummary(changedFiles);
+      // Get detailed file changes and snippets
+      const changePromises = changedFiles.map(async (change) => {
+        const { details, snippet } = await this.getFileChanges(change);
+        return {
+          details,
+          snippet,
+          type: change.type,
+        };
+      });
 
-      // Build the summary
-      let summary = 'DevTrack:';
+      const changes = await Promise.all(changePromises);
 
-      // Add branch context
-      if (context) {
-        summary += ` ${context}`;
-      }
-
-      // Add file changes
-      if (significantChanges.length > 0) {
-        summary += ` | Changes in: ${significantChanges.join('; ')}`;
-      } else {
-        // Fallback to basic stats
-        const stats = this.calculateChangeStats(changedFiles);
-        const changeDetails = [];
-        if (stats.added > 0) {
-          changeDetails.push(`${stats.added} files added`);
+      // Add change details
+      summary += 'Changes:\n';
+      changes.forEach((change) => {
+        if (change.details) {
+          summary += `- ${change.type}: ${change.details}\n`;
         }
-        if (stats.modified > 0) {
-          changeDetails.push(`${stats.modified} files modified`);
-        }
-        if (stats.deleted > 0) {
-          changeDetails.push(`${stats.deleted} files deleted`);
-        }
+      });
 
-        summary += ` | ${changeDetails.join(', ')}`;
-      }
+      // Add code snippets
+      summary += '\nCode Snippets:\n';
+      changes.forEach((change) => {
+        if (change.snippet) {
+          summary += `\n${change.snippet}\n`;
+        }
+      });
 
-      // Save commit info and return summary
+      // Save commit info
       await this.projectContext.addCommit(summary, changedFiles);
       this.outputChannel.appendLine(
-        `DevTrack: Generated commit summary: "${summary}"`
+        `DevTrack: Generated commit summary with code snippets`
       );
 
       return summary;
@@ -164,15 +186,7 @@ export class SummaryGenerator {
       this.outputChannel.appendLine(
         `DevTrack: Error generating summary: ${error}`
       );
-      return 'DevTrack: Updated files';
+      return `DevTrack Update - ${new Date().toISOString()}\nUpdated files`;
     }
-  }
-
-  private calculateChangeStats(changes: Change[]) {
-    return {
-      added: changes.filter((change) => change.type === 'added').length,
-      modified: changes.filter((change) => change.type === 'changed').length,
-      deleted: changes.filter((change) => change.type === 'deleted').length,
-    };
   }
 }
