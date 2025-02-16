@@ -378,16 +378,24 @@ export class GitService extends EventEmitter {
         // Create tracking directory in user's home
         await this.createTrackingDirectory();
 
-        // Create a .gitignore file that allows our summaries to be tracked
+        // Create changes directory
+        const changesDir = path.join(this.currentTrackingDir, 'changes');
+        if (!fs.existsSync(changesDir)) {
+          await fs.promises.mkdir(changesDir, { recursive: true });
+        }
+
+        // Create a .gitignore file that only ignores system files
         const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
         const gitignoreContent = `
-  # DevTrack - Track only specific files
+  # DevTrack - Ignore system files only
   .DS_Store
   node_modules/
   .vscode/
   *.log
   
-  # Keep everything else to ensure summaries are tracked
+  # Ensure changes directory is tracked
+  !changes/
+  !changes/*
   `;
         await fs.promises.writeFile(gitignorePath, gitignoreContent);
 
@@ -411,14 +419,9 @@ export class GitService extends EventEmitter {
             'local'
           );
 
-          // Create a placeholder README.md
-          const readmePath = path.join(this.currentTrackingDir, 'README.md');
-          const readmeContent = `# DevTrack Coding History\n\nThis repository contains your coding activity tracked by DevTrack.\n\nStarted tracking on: ${new Date().toISOString()}\n`;
-          await fs.promises.writeFile(readmePath, readmeContent);
-
-          // Initialize with README and .gitignore
-          await this.git.add(['.gitignore', 'README.md']);
-          await this.git.commit('DevTrack: Initialize tracking');
+          // Initialize with empty changes directory and .gitignore
+          await this.git.add(['.gitignore', 'changes/.gitkeep']);
+          await this.git.commit('DevTrack: Initialize tracking repository');
         }
 
         // Check if remote exists
@@ -532,23 +535,31 @@ export class GitService extends EventEmitter {
           throw new Error('Git not initialized');
         }
 
+        // Create a changes directory if it doesn't exist
+        const changesDir = path.join(this.currentTrackingDir, 'changes');
+        if (!fs.existsSync(changesDir)) {
+          await fs.promises.mkdir(changesDir, { recursive: true });
+        }
+
+        // Create a timestamped file with the changes
+        const timestamp = new Date().toISOString().replace(/:/g, '-');
+        const changeFile = path.join(changesDir, `${timestamp}.txt`);
+        await fs.promises.writeFile(changeFile, message);
+
         this.emitSafe('operation:start', 'commitAndPush');
 
         await this.withRetry(async () => {
-          // Get current branch
           const branches = await this.git.branch();
           const currentBranch = branches.current;
 
-          // Stage all tracked files
-          await this.git.add('.');
+          // Only stage the new change file
+          await this.git.add(changeFile);
 
-          // Commit with the enhanced message from summaryGenerator
-          // This will include timestamp, changes, and code snippets
+          // Commit with the enhanced message
           await this.git.commit(message);
           this.emitSafe('commit', message);
 
           try {
-            // Push with force-with-lease to ensure we don't overwrite others' changes
             await this.git.push([
               'origin',
               currentBranch,
@@ -558,7 +569,6 @@ export class GitService extends EventEmitter {
           } catch (pushError: any) {
             if (pushError.message.includes('no upstream branch')) {
               await this.setupRemoteTracking();
-              // Try push again after setting upstream
               await this.git.push([
                 'origin',
                 currentBranch,
