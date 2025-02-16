@@ -352,15 +352,41 @@ export class GitService extends EventEmitter {
           const branches = await this.git.branch();
           const currentBranch = branches.current;
 
-          // Stage only tracking metadata files
-          const trackingFiles = [
-            'tracking.json',
-            'changes/*.json', // Only track change record files
-          ];
+          // Ensure changes directory exists
+          const changesDir = path.join(this.currentTrackingDir, 'changes');
+          if (!fs.existsSync(changesDir)) {
+            await fs.promises.mkdir(changesDir, { recursive: true });
+          }
 
-          // Stage specific files instead of all files
-          for (const pattern of trackingFiles) {
-            await this.git.add(pattern);
+          // Create a new change record
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const changeFile = path.join(changesDir, `change-${timestamp}.json`);
+          await fs.promises.writeFile(
+            changeFile,
+            JSON.stringify(
+              {
+                timestamp,
+                message,
+                type: 'commit',
+              },
+              null,
+              2
+            )
+          );
+
+          // Stage specific files
+          await this.git.add('tracking.json');
+          await this.git.add('.gitignore');
+
+          // Add all files in changes directory
+          const changesPattern = path.join('changes', '*.json');
+          try {
+            await this.git.add(changesPattern);
+          } catch (error) {
+            this.outputChannel.appendLine(
+              `DevTrack: No existing change files to add: ${error}`
+            );
+            // This is okay - might be first commit
           }
 
           // Commit changes
@@ -402,6 +428,35 @@ export class GitService extends EventEmitter {
     });
   }
 
+  private async updateTrackingMetadata(
+    data: Partial<TrackingMetadata>
+  ): Promise<void> {
+    const metadataPath = path.join(this.currentTrackingDir, 'tracking.json');
+    let metadata: TrackingMetadata;
+
+    try {
+      if (fs.existsSync(metadataPath)) {
+        metadata = JSON.parse(await fs.promises.readFile(metadataPath, 'utf8'));
+      } else {
+        metadata = {
+          projectPath: '',
+          lastSync: new Date().toISOString(),
+          changes: [],
+        };
+      }
+
+      metadata = { ...metadata, ...data };
+      await fs.promises.writeFile(
+        metadataPath,
+        JSON.stringify(metadata, null, 2)
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(
+        'DevTrack: Failed to update tracking metadata'
+      );
+    }
+  }
+
   public async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
@@ -412,7 +467,13 @@ export class GitService extends EventEmitter {
         // Create tracking directory in user's home
         await this.createTrackingDirectory();
 
-        // Create a .gitignore file to ignore everything except tracking files
+        // Create changes directory
+        const changesDir = path.join(this.currentTrackingDir, 'changes');
+        if (!fs.existsSync(changesDir)) {
+          await fs.promises.mkdir(changesDir, { recursive: true });
+        }
+
+        // Create a .gitignore file
         const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
         const gitignoreContent = `
   # Ignore everything by default
@@ -791,35 +852,6 @@ export class GitService extends EventEmitter {
     }
 
     throw lastError;
-  }
-
-  private async updateTrackingMetadata(
-    data: Partial<TrackingMetadata>
-  ): Promise<void> {
-    const metadataPath = path.join(this.currentTrackingDir, 'tracking.json');
-    let metadata: TrackingMetadata;
-
-    try {
-      if (fs.existsSync(metadataPath)) {
-        metadata = JSON.parse(await fs.promises.readFile(metadataPath, 'utf8'));
-      } else {
-        metadata = {
-          projectPath: '',
-          lastSync: new Date().toISOString(),
-          changes: [],
-        };
-      }
-
-      metadata = { ...metadata, ...data };
-      await fs.promises.writeFile(
-        metadataPath,
-        JSON.stringify(metadata, null, 2)
-      );
-    } catch (error) {
-      this.outputChannel.appendLine(
-        'DevTrack: Failed to update tracking metadata'
-      );
-    }
   }
 
   public async recordChanges(
