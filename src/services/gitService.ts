@@ -303,10 +303,108 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async setupRemoteTracking(): Promise<void> {
+    try {
+      if (!this.git) {
+        throw new Error('Git not initialized');
+      }
+
+      const branches = await this.git.branch();
+      const currentBranch = branches.current;
+
+      // Instead of pulling all files, we'll only push our changes
+      try {
+        // Set upstream without pulling
+        await this.git.push([
+          '--set-upstream',
+          'origin',
+          currentBranch,
+          '--force',
+        ]);
+        this.outputChannel.appendLine(
+          `DevTrack: Set upstream tracking for ${currentBranch}`
+        );
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `DevTrack: Failed to set upstream - ${error}`
+        );
+        throw error;
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error in setupRemoteTracking - ${error}`
+      );
+      throw error;
+    }
+  }
+
+  public async commitAndPush(message: string): Promise<void> {
+    return this.enqueueOperation(async () => {
+      try {
+        if (!this.git) {
+          throw new Error('Git not initialized');
+        }
+
+        this.emitSafe('operation:start', 'commitAndPush');
+
+        await this.withRetry(async () => {
+          // Get current branch
+          const branches = await this.git.branch();
+          const currentBranch = branches.current;
+
+          // Stage only tracking metadata files
+          const trackingFiles = [
+            'tracking.json',
+            'changes/*.json', // Only track change record files
+          ];
+
+          // Stage specific files instead of all files
+          for (const pattern of trackingFiles) {
+            await this.git.add(pattern);
+          }
+
+          // Commit changes
+          await this.git.commit(message);
+          this.emitSafe('commit', message);
+
+          try {
+            // Push with force-with-lease to ensure we don't overwrite others' changes
+            // but also don't pull their changes into our workspace
+            await this.git.push([
+              'origin',
+              currentBranch,
+              '--force-with-lease',
+            ]);
+            this.emitSafe('push', currentBranch);
+          } catch (pushError: any) {
+            if (pushError.message.includes('no upstream branch')) {
+              await this.setupRemoteTracking();
+              // Try push again after setting upstream
+              await this.git.push([
+                'origin',
+                currentBranch,
+                '--force-with-lease',
+              ]);
+            } else {
+              throw pushError;
+            }
+          }
+        });
+
+        this.emitSafe('operation:end', 'commitAndPush');
+      } catch (error: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Git commit failed - ${error.message}`
+        );
+        this.emitSafe('error', error);
+        throw error;
+      }
+    });
+  }
+
   public async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
-        // First validate workspace and Git installation
         if (!(await this.validateWorkspace())) {
           return;
         }
@@ -314,7 +412,21 @@ export class GitService extends EventEmitter {
         // Create tracking directory in user's home
         await this.createTrackingDirectory();
 
-        // Initialize Git only in tracking directory
+        // Create a .gitignore file to ignore everything except tracking files
+        const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
+        const gitignoreContent = `
+  # Ignore everything by default
+  *
+  **/*
+  
+  # Track only specific files
+  !tracking.json
+  !changes/
+  !changes/*.json
+  !.gitignore
+  `;
+        await fs.promises.writeFile(gitignorePath, gitignoreContent);
+
         const options: Partial<SimpleGitOptions> = {
           baseDir: this.currentTrackingDir,
           binary: this.findGitExecutable(),
@@ -323,11 +435,9 @@ export class GitService extends EventEmitter {
 
         this.git = simpleGit(options);
 
-        // Check if tracking repo is already initialized
         const isRepo = await this.git.checkIsRepo();
 
         if (!isRepo) {
-          // Initialize new repository
           await this.git.init();
           await this.git.addConfig('user.name', 'DevTrack', false, 'local');
           await this.git.addConfig(
@@ -344,7 +454,9 @@ export class GitService extends EventEmitter {
             changes: [],
           });
 
-          await this.git.add('.');
+          // Only add specific files
+          await this.git.add('.gitignore');
+          await this.git.add('tracking.json');
           await this.git.commit('DevTrack: Initialize tracking');
         }
 
@@ -353,34 +465,19 @@ export class GitService extends EventEmitter {
         const hasOrigin = remotes.some((remote) => remote.name === 'origin');
 
         if (!hasOrigin) {
-          // Add remote if it doesn't exist
           await this.git.addRemote('origin', remoteUrl);
           this.outputChannel.appendLine(
             `DevTrack: Added remote origin ${remoteUrl}`
           );
         } else {
-          // Update existing remote URL
           await this.git.remote(['set-url', 'origin', remoteUrl]);
           this.outputChannel.appendLine(
             `DevTrack: Updated remote origin to ${remoteUrl}`
           );
         }
 
-        try {
-          // Try to set up tracking branch
-          await this.git.push('origin', 'main', ['--set-upstream']);
-        } catch (pushError) {
-          // If push fails, it might be because the branch is named 'master' instead of 'main'
-          try {
-            const branches = await this.git.branch();
-            const currentBranch = branches.current;
-            await this.git.push('origin', currentBranch, ['--set-upstream']);
-          } catch (error: any) {
-            this.outputChannel.appendLine(
-              `DevTrack: Error setting up tracking branch - ${error.message}`
-            );
-          }
-        }
+        // Setup remote tracking without pulling
+        await this.setupRemoteTracking();
 
         this.outputChannel.appendLine(
           'DevTrack: Repository initialization complete'
@@ -860,35 +957,6 @@ export class GitService extends EventEmitter {
         throw error;
       });
     return this.operationQueue;
-  }
-
-  public async commitAndPush(message: string): Promise<void> {
-    return this.enqueueOperation(async () => {
-      try {
-        if (!this.git) {
-          throw new Error('Git not initialized');
-        }
-
-        this.emitSafe('operation:start', 'commitAndPush');
-
-        await this.withRetry(async () => {
-          await this.git.add('.');
-          await this.git.commit(message);
-          this.emitSafe('commit', message);
-
-          await this.git.push();
-          this.emitSafe('push', 'main'); // Assuming main branch for now
-        });
-
-        this.emitSafe('operation:end', 'commitAndPush');
-      } catch (error: any) {
-        this.outputChannel.appendLine(
-          `DevTrack: Git commit failed - ${error.message}`
-        );
-        this.emitSafe('error', error);
-        throw error;
-      }
-    });
   }
 
   // Helper method to check if we have any listeners for an event
