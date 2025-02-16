@@ -325,7 +325,9 @@ export class GitService extends EventEmitter {
 
         // Check if tracking repo is already initialized
         const isRepo = await this.git.checkIsRepo();
+
         if (!isRepo) {
+          // Initialize new repository
           await this.git.init();
           await this.git.addConfig('user.name', 'DevTrack', false, 'local');
           await this.git.addConfig(
@@ -346,30 +348,97 @@ export class GitService extends EventEmitter {
           await this.git.commit('DevTrack: Initialize tracking');
         }
 
+        // Check if remote exists
+        const remotes = await this.git.getRemotes();
+        const hasOrigin = remotes.some((remote) => remote.name === 'origin');
+
+        if (!hasOrigin) {
+          // Add remote if it doesn't exist
+          await this.git.addRemote('origin', remoteUrl);
+          this.outputChannel.appendLine(
+            `DevTrack: Added remote origin ${remoteUrl}`
+          );
+        } else {
+          // Update existing remote URL
+          await this.git.remote(['set-url', 'origin', remoteUrl]);
+          this.outputChannel.appendLine(
+            `DevTrack: Updated remote origin to ${remoteUrl}`
+          );
+        }
+
+        try {
+          // Try to set up tracking branch
+          await this.git.push('origin', 'main', ['--set-upstream']);
+        } catch (pushError) {
+          // If push fails, it might be because the branch is named 'master' instead of 'main'
+          try {
+            const branches = await this.git.branch();
+            const currentBranch = branches.current;
+            await this.git.push('origin', currentBranch, ['--set-upstream']);
+          } catch (error: any) {
+            this.outputChannel.appendLine(
+              `DevTrack: Error setting up tracking branch - ${error.message}`
+            );
+          }
+        }
+
         this.outputChannel.appendLine(
-          'DevTrack: Tracking repository initialized in home directory'
+          'DevTrack: Repository initialization complete'
         );
       } catch (error: any) {
         this.outputChannel.appendLine(
-          `DevTrack: Failed to initialize tracking - ${error.message}`
+          `DevTrack: Failed to initialize repository - ${error.message}`
         );
         throw error;
       }
     });
   }
 
-  private async getGitVersion(): Promise<string> {
+  // Helper method to ensure repository and remote are properly set up
+  public async ensureRepoSetup(remoteUrl: string): Promise<void> {
     try {
-      const { stdout } = await execAsync('git --version');
-      const match = stdout.match(/git version (\d+\.\d+\.\d+)/);
-      if (!match) {
-        throw new Error('Unable to determine Git version.');
+      if (!this.git) {
+        throw new Error('Git not initialized');
       }
-      return match[1];
-    } catch (error) {
-      throw new Error(
-        'Failed to retrieve Git version. Ensure Git is installed and accessible.'
+
+      const isRepo = await this.git.checkIsRepo();
+      if (!isRepo) {
+        await this.initializeRepo(remoteUrl);
+        return;
+      }
+
+      // Check remote
+      const remotes = await this.git.getRemotes();
+      const hasOrigin = remotes.some((remote) => remote.name === 'origin');
+
+      if (!hasOrigin) {
+        await this.git.addRemote('origin', remoteUrl);
+        this.outputChannel.appendLine(
+          `DevTrack: Added remote origin ${remoteUrl}`
+        );
+      } else {
+        // Update existing remote URL
+        await this.git.remote(['set-url', 'origin', remoteUrl]);
+        this.outputChannel.appendLine(
+          `DevTrack: Updated remote origin to ${remoteUrl}`
+        );
+      }
+
+      // Ensure we have the correct tracking branch
+      try {
+        const branches = await this.git.branch();
+        const currentBranch = branches.current;
+        await this.git.push('origin', currentBranch, ['--set-upstream']);
+      } catch (error: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Error setting up tracking branch - ${error.message}`
+        );
+      }
+    } catch (error: any) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error ensuring repo setup - ${error.message}`
       );
+      throw error;
     }
   }
 
