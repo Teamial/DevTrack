@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-/* eslint-disable no-undef */
+import { Buffer } from 'buffer';
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';
 import * as path from 'path';
@@ -8,8 +8,12 @@ import { OutputChannel } from 'vscode';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { execSync } from 'child_process';
+import process from 'process';
 const execAsync = promisify(exec);
 import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 interface GitServiceEvents {
   commit: (message: string) => void;
@@ -44,6 +48,8 @@ export class GitService extends EventEmitter {
   private currentTrackingDir: string = '';
   private outputChannel: OutputChannel;
   private operationQueue: Promise<any> = Promise.resolve();
+  private statsDir: string = '';
+  private hasInitializedStats: boolean = false;
   private static MAX_RETRIES = 3;
   private static RETRY_DELAY = 1000;
   private readonly isWindows: boolean = process.platform === 'win32';
@@ -156,37 +162,6 @@ export class GitService extends EventEmitter {
       );
       this.emit('error', new Error(`Event emission failed: ${error}`));
       return false;
-    }
-  }
-
-  private async verifyLinuxPermissions(): Promise<void> {
-    if (!this.isWindows) {
-      try {
-        // Check if git commands can be executed
-        await execAsync('git --version');
-
-        // Check if .gitconfig is accessible
-        const homeDir = process.env.HOME;
-        if (homeDir) {
-          const gitConfig = path.join(homeDir, '.gitconfig');
-          try {
-            await fs.promises.access(
-              gitConfig,
-              fs.constants.R_OK | fs.constants.W_OK
-            );
-          } catch {
-            // Create .gitconfig if it doesn't exist
-            await fs.promises.writeFile(gitConfig, '', { mode: 0o644 });
-          }
-        }
-      } catch (error: any) {
-        this.outputChannel.appendLine(
-          `DevTrack: Linux permissions check failed - ${error.message}`
-        );
-        throw new Error(
-          'Git permissions issue detected. Please check your Git installation and permissions.'
-        );
-      }
     }
   }
 
@@ -440,6 +415,12 @@ export class GitService extends EventEmitter {
           await fs.promises.mkdir(changesDir, { recursive: true });
         }
 
+        // Create .gitkeep to ensure the changes directory is tracked
+        const gitkeepPath = path.join(changesDir, '.gitkeep');
+        if (!fs.existsSync(gitkeepPath)) {
+          await fs.promises.writeFile(gitkeepPath, '');
+        }
+
         const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
         const gitignoreContent = `
     # DevTrack - Ignore system files only
@@ -473,11 +454,11 @@ export class GitService extends EventEmitter {
             'local'
           );
 
-          // Create and switch to main branch explicitly
-          await this.git.raw(['checkout', '-b', 'main']);
-
           await this.git.add(['.gitignore', 'changes/.gitkeep']);
           await this.git.commit('DevTrack: Initialize tracking repository');
+
+          // Explicitly create and checkout main branch
+          await this.git.raw(['branch', '-M', 'main']);
         }
 
         // Check if remote exists
@@ -504,6 +485,7 @@ export class GitService extends EventEmitter {
 
         // Setup remote tracking
         await this.setupRemoteTracking();
+        await this.initializeStatistics(true);
 
         this.outputChannel.appendLine(
           'DevTrack: Repository initialization complete'
@@ -545,6 +527,7 @@ export class GitService extends EventEmitter {
           `DevTrack: Updated remote origin to ${remoteUrl}`
         );
       }
+      await this.initializeStatistics(false);
 
       // Ensure we have the correct tracking branch
       try {
@@ -560,6 +543,50 @@ export class GitService extends EventEmitter {
     } catch (error: any) {
       this.outputChannel.appendLine(
         `DevTrack: Error ensuring repo setup - ${error.message}`
+      );
+      throw error;
+    }
+  }
+
+  private async initializeStatistics(isNewUser: boolean): Promise<void> {
+    if (this.hasInitializedStats) {
+      return;
+    }
+
+    try {
+      this.statsDir = path.join(this.currentTrackingDir, 'stats');
+      if (!fs.existsSync(this.statsDir)) {
+        await fs.promises.mkdir(this.statsDir, { recursive: true });
+      }
+
+      const dashboardFile = path.join(this.statsDir, 'dashboard.html');
+      const statsExists = fs.existsSync(dashboardFile);
+
+      if (isNewUser || !statsExists) {
+        // Copy dashboard component to stats directory
+        await fs.promises.copyFile(
+          path.join(__dirname, 'components', 'CodingStatsDashboard.js'),
+          path.join(this.statsDir, 'dashboard.js')
+        );
+
+        // Create initial commit for statistics
+        await this.git.add(path.join(this.statsDir, '*'));
+        await this.git.commit(
+          'DevTrack: Initialize coding statistics dashboard'
+        );
+
+        // Push changes
+        const currentBranch = (await this.git.branch()).current;
+        await this.git.push('origin', currentBranch);
+      }
+
+      this.hasInitializedStats = true;
+      this.outputChannel.appendLine(
+        'DevTrack: Statistics dashboard initialized'
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Failed to initialize statistics - ${error}`
       );
       throw error;
     }
@@ -943,12 +970,6 @@ export class GitService extends EventEmitter {
       throw new Error(`Git configuration error: ${error.message}`);
     }
   }
-  catch(error: any) {
-    this.outputChannel.appendLine(
-      `DevTrack: Git config verification failed - ${error.message}`
-    );
-    throw new Error(`Git configuration error: ${error.message}`);
-  }
 
   private async withRetry<T>(operation: () => Promise<T>): Promise<T> {
     let lastError: Error | null = null;
@@ -964,7 +985,7 @@ export class GitService extends EventEmitter {
 
         if (attempt < GitService.MAX_RETRIES) {
           await new Promise((resolve) =>
-            setTimeout(resolve, GitService.RETRY_DELAY * attempt)
+            globalThis.setTimeout(resolve, GitService.RETRY_DELAY * attempt)
           );
           await this.cleanupGitLocks();
         }

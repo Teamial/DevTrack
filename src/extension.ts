@@ -1,5 +1,7 @@
 /* eslint-disable no-unused-vars */
-/* eslint-disable no-undef */
+/// <reference types="node" />
+import process from 'process';
+import { Buffer } from 'buffer';
 import * as vscode from 'vscode';
 import { GitHubService } from './services/githubService';
 import { GitService } from './services/gitService';
@@ -26,7 +28,7 @@ class GitInstallationHandler {
       const gitVersion = execSync('git --version', { encoding: 'utf8' });
       outputChannel.appendLine(`DevTrack: Git found - ${gitVersion.trim()}`);
       return true;
-    } catch (error) {
+    } catch {
       const platform = process.platform;
       const response = await vscode.window.showErrorMessage(
         'Git is required but not found on your system. This might be because Git is not installed or not in your system PATH.',
@@ -41,15 +43,15 @@ class GitInstallationHandler {
       );
 
       if (response === 'Show Installation Guide') {
-        this.showInstallationGuide();
+        GitInstallationHandler.showInstallationGuide();
       } else if (response === 'Fix PATH Issue') {
-        this.showPathFixGuide();
+        GitInstallationHandler.showPathFixGuide();
       }
       return false;
     }
   }
 
-  private static showPathFixGuide() {
+  private static showPathFixGuide(): void {
     const panel = vscode.window.createWebviewPanel(
       'gitPathGuide',
       'Fix Git PATH Issue',
@@ -162,7 +164,7 @@ class GitInstallationHandler {
     panel.webview.html = content;
   }
 
-  static showInstallationGuide() {
+  private static showInstallationGuide(): void {
     const platform = process.platform;
     const downloadUrl =
       this.DOWNLOAD_URLS[platform as keyof typeof this.DOWNLOAD_URLS];
@@ -279,7 +281,7 @@ Fedora:
   }
 }
 
-function showWelcomeInfo(outputChannel: vscode.OutputChannel) {
+function showWelcomeInfo(outputChannel: vscode.OutputChannel): void {
   const message =
     'Welcome to DevTrack! Would you like to set up automatic code tracking?';
   const welcomeMessage = `

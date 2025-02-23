@@ -1,14 +1,13 @@
-/* eslint-disable no-undef */
-
 // services/scheduler.ts
 import * as vscode from 'vscode';
+import { setTimeout, clearInterval, setInterval } from 'node:timers';
 import { Tracker } from './tracker';
 import { SummaryGenerator } from './summaryGenerator';
 import { GitService } from './gitService';
 import { OutputChannel } from 'vscode';
 
 export class Scheduler {
-  private timer: NodeJS.Timeout | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private isCommitting = false;
   private pendingChanges = false;
 
@@ -59,13 +58,17 @@ export class Scheduler {
 
     try {
       this.isCommitting = true;
-      const commitMessage =
-        await this.summaryGenerator.generateSummary(changedFiles);
+      // eslint-disable-next-line prettier/prettier
+      const commitMessage = await this.summaryGenerator.generateSummary(changedFiles);
 
       const config = vscode.workspace.getConfiguration('devtrack');
       if (config.get<boolean>('confirmBeforeCommit', true)) {
+        // Create a condensed version of the commit message for the dialog
+        const condensedMessage =
+          this.createCondensedCommitMessage(commitMessage);
+
         const userResponse = await vscode.window.showInformationMessage(
-          `DevTrack: A commit will be made with the following message:\n"${commitMessage}"`,
+          `DevTrack: A commit will be made with the following changes:\n"${condensedMessage}"`,
           { modal: true },
           'Proceed',
           'Cancel'
@@ -102,6 +105,23 @@ export class Scheduler {
         setTimeout(() => this.commitChanges(), 5000); // Wait 5 seconds before processing pending changes
       }
     }
+  }
+
+  private createCondensedCommitMessage(fullMessage: string): string {
+    // Extract just the first part of the message (before code snippets)
+    const parts = fullMessage.split('Code Snippets:');
+    let condensed = parts[0].trim();
+
+    // Add a count of affected files instead of showing all snippets
+    const codeBlockCount = (fullMessage.match(/```/g) || []).length / 2;
+    condensed += `\n(${codeBlockCount} file${codeBlockCount !== 1 ? 's' : ''} modified)`;
+
+    // Limit to a reasonable length
+    if (condensed.length > 500) {
+      condensed = condensed.substring(0, 497) + '...';
+    }
+
+    return condensed;
   }
 
   updateFrequency(newFrequency: number) {

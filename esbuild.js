@@ -9,7 +9,7 @@ async function build() {
     bundle: true,
     outfile: 'dist/extension.js',
     external: ['vscode'],
-    format: 'cjs',
+    format: 'esm',
     platform: 'node',
     target: 'node14',
     sourcemap: !production,

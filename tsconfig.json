@@ -1,17 +1,26 @@
 {
-	"compilerOptions": {
-	  "module": "commonjs",
-	  "target": "es2020",
-	  "lib": ["es2020"],
-	  "outDir": "dist",
-	  "rootDir": "src",
-	  "strict": true,
-	  "esModuleInterop": true,
-	  "skipLibCheck": true,
-	  "forceConsistentCasingInFileNames": true,
-	  "sourceMap": true,
-	  "types": ["vscode", "mocha"] // Ensure this line is present
-	},
-	"exclude": ["node_modules", "../.vscode-test"]
-  }
-  
+  "compilerOptions": {
+    "module": "es2020",
+    "target": "es2020",
+    "lib": [
+      "es2020",
+      "dom",
+      "dom.iterable",
+      "webworker",
+      "scripthost"
+    ],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "jsx": "react",
+    "types": ["vscode", "mocha", "node"],
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "sourceMap": true,
+    "resolveJsonModule": true
+  },
+  "exclude": ["node_modules", "../.vscode-test"]
+}
