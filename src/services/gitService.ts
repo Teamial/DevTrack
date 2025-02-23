@@ -315,7 +315,17 @@ export class GitService extends EventEmitter {
       }
 
       const branches = await this.git.branch();
-      const currentBranch = branches.current;
+      const currentBranch = branches.current || 'main';
+
+      // Create and checkout main branch if it doesn't exist
+      if (!branches.all.includes('main')) {
+        await this.git.checkoutLocalBranch('main');
+      }
+
+      // Ensure we're on a branch before pushing
+      if (!branches.current) {
+        await this.git.checkout('main');
+      }
 
       // Instead of pulling all files, we'll only push our changes
       try {
@@ -410,7 +420,6 @@ export class GitService extends EventEmitter {
         };
 
         this.git = simpleGit(options);
-
         const isRepo = await this.git.checkIsRepo();
 
         if (!isRepo) {
@@ -422,6 +431,9 @@ export class GitService extends EventEmitter {
             false,
             'local'
           );
+
+          // Create and switch to main branch explicitly
+          await this.git.raw(['checkout', '-b', 'main']);
 
           // Initialize with empty changes directory and .gitignore
           await this.git.add(['.gitignore', 'changes/.gitkeep']);

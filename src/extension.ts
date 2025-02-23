@@ -420,53 +420,56 @@ async function restoreAuthenticationState(
   services: DevTrackServices
 ): Promise<boolean> {
   try {
-    // Use getSession instead of getSessions
-    const session = await vscode.authentication.getSession(
-      'github',
-      ['repo', 'read:user'],
-      {
-        createIfNone: false,
-        silent: true, // Try to get session without prompting user
-      }
-    );
+    // Get persisted state first
+    const persistedState =
+      context.globalState.get<PersistedAuthState>('devtrackAuthState');
+    const currentWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-    if (session) {
-      services.githubService.setToken(session.accessToken);
-      const username = await services.githubService.getUsername();
+    // Only proceed with auth restoration if we have persisted state
+    if (persistedState?.username) {
+      const session = await vscode.authentication.getSession(
+        'github',
+        ['repo', 'read:user'],
+        {
+          createIfNone: false,
+          silent: true,
+        }
+      );
 
-      if (username) {
-        // Get persisted state
-        const persistedState =
-          context.globalState.get<PersistedAuthState>('devtrackAuthState');
-        const currentWorkspace =
-          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (session) {
+        services.githubService.setToken(session.accessToken);
+        const username = await services.githubService.getUsername();
 
-        // Initialize with persisted or default settings
-        const config = vscode.workspace.getConfiguration('devtrack');
-        const repoName =
-          config.get<string>('repoName') ||
-          persistedState?.repoName ||
-          'code-tracking';
-        const remoteUrl = `https://github.com/${username}/${repoName}.git`;
+        if (username === persistedState.username) {
+          // Initialize with persisted settings
+          const repoName = persistedState.repoName || 'code-tracking';
+          const remoteUrl = `https://github.com/${username}/${repoName}.git`;
 
-        await setupRepository(services, repoName, remoteUrl);
-        await initializeTracker(services);
+          try {
+            await services.gitService.ensureRepoSetup(remoteUrl);
+            await initializeTracker(services);
 
-        // Update UI
-        updateStatusBar(services, 'auth', true);
-        updateStatusBar(services, 'tracking', true);
+            // Update UI
+            updateStatusBar(services, 'auth', true);
+            updateStatusBar(services, 'tracking', true);
 
-        // Update persisted state
-        await context.globalState.update('devtrackAuthState', {
-          username,
-          repoName,
-          lastWorkspace: currentWorkspace,
-        });
+            // Update persisted state with current workspace
+            await context.globalState.update('devtrackAuthState', {
+              ...persistedState,
+              lastWorkspace: currentWorkspace,
+            });
 
-        services.outputChannel.appendLine(
-          'DevTrack: Successfully restored authentication state'
-        );
-        return true;
+            services.outputChannel.appendLine(
+              'DevTrack: Successfully restored authentication state'
+            );
+            return true;
+          } catch (error) {
+            services.outputChannel.appendLine(
+              `DevTrack: Error setting up repository - ${error}`
+            );
+            // Don't throw here - we'll handle the error gracefully
+          }
+        }
       }
     }
   } catch (error) {
