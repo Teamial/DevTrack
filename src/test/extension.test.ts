@@ -1,13 +1,12 @@
-// src/test/extension.test.ts
-const assert = require('assert');
-const vscode = require('vscode');
-const myExtension = require('../extension');
+import { strictEqual } from 'assert';
+import { ExtensionContext, window } from 'vscode';
+import * as extension from '../extension';
 
 suite('Extension Test Suite', () => {
-  vscode.window.showInformationMessage('Start all tests.');
+  window.showInformationMessage('Start all tests.');
 
   test('Sample test', () => {
-    assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-    assert.strictEqual(-1, [1, 2, 3].indexOf(0));
+    strictEqual(-1, [1, 2, 3].indexOf(5));
+    strictEqual(-1, [1, 2, 3].indexOf(0));
   });
 });
