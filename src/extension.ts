@@ -9,6 +9,7 @@ import { Scheduler } from './services/scheduler';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { ChangeAnalyzer } from './services/changeAnalyzer';
 
 // Git installation handling
 class GitInstallationHandler {
@@ -506,6 +507,7 @@ function createBaseServices(
     trackingStatusBar: createStatusBarItem('tracking'),
     authStatusBar: createStatusBarItem('auth'),
     extensionContext: context,
+    changeAnalyzer: new ChangeAnalyzer(outputChannel),
   };
 }
 
@@ -569,6 +571,7 @@ async function initializeServices(
     trackingStatusBar: createStatusBarItem('tracking'),
     authStatusBar: createStatusBarItem('auth'),
     extensionContext: context,
+    changeAnalyzer: new ChangeAnalyzer(outputChannel),
   };
 
   // Add status bars to subscriptions
@@ -791,6 +794,7 @@ interface DevTrackServices {
   trackingStatusBar: vscode.StatusBarItem;
   authStatusBar: vscode.StatusBarItem;
   extensionContext: vscode.ExtensionContext;
+  changeAnalyzer: ChangeAnalyzer;
 }
 
 async function initializeDevTrack(services: DevTrackServices) {

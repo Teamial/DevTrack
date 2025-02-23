@@ -215,48 +215,24 @@ export class GitService extends EventEmitter {
     }
   }
 
-  private async initializeTracking(): Promise<void> {
+  private async ensureGitInitialized(): Promise<void> {
     try {
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders || workspaceFolders.length === 0) {
-        throw new Error('No workspace folder is open');
+      if (!this.git) {
+        // Get tracking directory first
+        await this.createTrackingDirectory();
+
+        const options: Partial<SimpleGitOptions> = {
+          baseDir: this.currentTrackingDir,
+          binary: this.findGitExecutable(),
+          maxConcurrentProcesses: 1,
+        };
+
+        this.git = simpleGit(options);
+        this.outputChannel.appendLine('DevTrack: Git initialized successfully');
       }
-
-      const projectPath = workspaceFolders[0].uri.fsPath;
-
-      // Create a unique identifier for the project based on its path
-      this.projectIdentifier = Buffer.from(projectPath)
-        .toString('base64')
-        .replace(/[/+=]/g, '_');
-
-      // Create project-specific tracking directory in user's home directory
-      this.currentTrackingDir = path.join(
-        this.baseTrackingDir,
-        this.projectIdentifier
-      );
-
-      if (!fs.existsSync(this.currentTrackingDir)) {
-        await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
-      }
-
-      // Initialize Git in tracking directory only
-      const options: Partial<SimpleGitOptions> = {
-        baseDir: this.currentTrackingDir,
-        binary: this.findGitExecutable(),
-        maxConcurrentProcesses: 1,
-      };
-
-      this.git = simpleGit(options);
-      this.repoPath = this.currentTrackingDir; // Update repoPath to use tracking directory
-
+    } catch (error: any) {
       this.outputChannel.appendLine(
-        `DevTrack: Tracking directory initialized at ${this.currentTrackingDir}`
-      );
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.outputChannel.appendLine(
-        `DevTrack: Tracking initialization failed - ${errorMessage}`
+        `DevTrack: Failed to initialize Git - ${error.message}`
       );
       throw error;
     }
@@ -282,29 +258,48 @@ export class GitService extends EventEmitter {
   }
 
   private async createTrackingDirectory(): Promise<void> {
-    if (!this.currentTrackingDir) {
-      const homeDir = process.env.HOME || process.env.USERPROFILE;
-      if (!homeDir) {
-        throw new Error('Unable to determine home directory for DevTrack');
+    try {
+      if (!this.currentTrackingDir) {
+        const homeDir = process.env.HOME || process.env.USERPROFILE;
+        if (!homeDir) {
+          throw new Error('Unable to determine home directory for DevTrack');
+        }
+
+        // Create a base tracking directory even without workspace
+        this.currentTrackingDir = path.join(
+          homeDir,
+          '.devtrack',
+          'tracking',
+          'default'
+        );
+
+        // If workspace is available, use workspace-specific directory
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          const workspaceId = Buffer.from(workspaceFolders[0].uri.fsPath)
+            .toString('base64')
+            .replace(/[/+=]/g, '_');
+          this.currentTrackingDir = path.join(
+            homeDir,
+            '.devtrack',
+            'tracking',
+            workspaceId
+          );
+        }
+
+        if (!fs.existsSync(this.currentTrackingDir)) {
+          await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
+        }
+
+        this.outputChannel.appendLine(
+          `DevTrack: Created tracking directory at ${this.currentTrackingDir}`
+        );
       }
-
-      // Create a unique tracking directory under .devtrack in home directory
-      const workspaceId = Buffer.from(
-        vscode.workspace.workspaceFolders![0].uri.fsPath
-      )
-        .toString('base64')
-        .replace(/[/+=]/g, '_');
-
-      this.currentTrackingDir = path.join(
-        homeDir,
-        '.devtrack',
-        'tracking',
-        workspaceId
+    } catch (error: any) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error creating tracking directory - ${error.message}`
       );
-
-      if (!fs.existsSync(this.currentTrackingDir)) {
-        await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
-      }
+      throw error;
     }
   }
 
@@ -382,6 +377,53 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async initializeTracking(): Promise<void> {
+    try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        throw new Error('No workspace folder is open');
+      }
+
+      const projectPath = workspaceFolders[0].uri.fsPath;
+
+      // Create a unique identifier for the project based on its path
+      this.projectIdentifier = Buffer.from(projectPath)
+        .toString('base64')
+        .replace(/[/+=]/g, '_');
+
+      // Create project-specific tracking directory in user's home directory
+      this.currentTrackingDir = path.join(
+        this.baseTrackingDir,
+        this.projectIdentifier
+      );
+
+      if (!fs.existsSync(this.currentTrackingDir)) {
+        await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
+      }
+
+      // Initialize Git in tracking directory only
+      const options: Partial<SimpleGitOptions> = {
+        baseDir: this.currentTrackingDir,
+        binary: this.findGitExecutable(),
+        maxConcurrentProcesses: 1,
+      };
+
+      this.git = simpleGit(options);
+      this.repoPath = this.currentTrackingDir; // Update repoPath to use tracking directory
+
+      this.outputChannel.appendLine(
+        `DevTrack: Tracking directory initialized at ${this.currentTrackingDir}`
+      );
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.outputChannel.appendLine(
+        `DevTrack: Tracking initialization failed - ${errorMessage}`
+      );
+      throw error;
+    }
+  }
+
   public async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
@@ -389,28 +431,27 @@ export class GitService extends EventEmitter {
           return;
         }
 
-        // Create tracking directory in user's home
+        // Initialize Git first
+        await this.ensureGitInitialized();
         await this.createTrackingDirectory();
 
-        // Create changes directory
         const changesDir = path.join(this.currentTrackingDir, 'changes');
         if (!fs.existsSync(changesDir)) {
           await fs.promises.mkdir(changesDir, { recursive: true });
         }
 
-        // Create a .gitignore file that only ignores system files
         const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
         const gitignoreContent = `
-  # DevTrack - Ignore system files only
-  .DS_Store
-  node_modules/
-  .vscode/
-  *.log
-  
-  # Ensure changes directory is tracked
-  !changes/
-  !changes/*
-  `;
+    # DevTrack - Ignore system files only
+    .DS_Store
+    node_modules/
+    .vscode/
+    *.log
+    
+    # Ensure changes directory is tracked
+    !changes/
+    !changes/*
+    `;
         await fs.promises.writeFile(gitignorePath, gitignoreContent);
 
         const options: Partial<SimpleGitOptions> = {
@@ -435,7 +476,6 @@ export class GitService extends EventEmitter {
           // Create and switch to main branch explicitly
           await this.git.raw(['checkout', '-b', 'main']);
 
-          // Initialize with empty changes directory and .gitignore
           await this.git.add(['.gitignore', 'changes/.gitkeep']);
           await this.git.commit('DevTrack: Initialize tracking repository');
         }
@@ -456,7 +496,13 @@ export class GitService extends EventEmitter {
           );
         }
 
-        // Setup remote tracking without pulling
+        // Ensure we're on main branch before setting up tracking
+        const branches = await this.git.branch();
+        if (!branches.current || branches.current !== 'main') {
+          await this.git.checkout('main');
+        }
+
+        // Setup remote tracking
         await this.setupRemoteTracking();
 
         this.outputChannel.appendLine(
@@ -474,9 +520,8 @@ export class GitService extends EventEmitter {
   // Helper method to ensure repository and remote are properly set up
   public async ensureRepoSetup(remoteUrl: string): Promise<void> {
     try {
-      if (!this.git) {
-        throw new Error('Git not initialized');
-      }
+      // Initialize Git first
+      await this.ensureGitInitialized();
 
       const isRepo = await this.git.checkIsRepo();
       if (!isRepo) {
@@ -504,12 +549,13 @@ export class GitService extends EventEmitter {
       // Ensure we have the correct tracking branch
       try {
         const branches = await this.git.branch();
-        const currentBranch = branches.current;
-        await this.git.push('origin', currentBranch, ['--set-upstream']);
+        await this.git.checkout('main');
+        await this.git.push(['--set-upstream', 'origin', 'main']);
       } catch (error: any) {
         this.outputChannel.appendLine(
           `DevTrack: Error setting up tracking branch - ${error.message}`
         );
+        // Continue even if push fails - we'll retry on next operation
       }
     } catch (error: any) {
       this.outputChannel.appendLine(
