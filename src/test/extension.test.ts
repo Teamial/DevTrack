@@ -1,6 +1,7 @@
-import * as assert from 'assert';
-import * as vscode from 'vscode';
-import * as myExtension from '../extension';
+// src/test/extension.test.ts
+const assert = require('assert');
+const vscode = require('vscode');
+const myExtension = require('../extension');
 
 suite('Extension Test Suite', () => {
   vscode.window.showInformationMessage('Start all tests.');

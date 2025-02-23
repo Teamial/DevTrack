@@ -1,0 +1,9 @@
+{
+  "require": "ts-node/register",
+  "spec": "src/test/**/*.test.ts",
+  "extensions": ["ts"],
+  "watch-files": ["src/**/*.ts"],
+  "recursive": true,
+  "timeout": 5000,
+  "exit": true
+}

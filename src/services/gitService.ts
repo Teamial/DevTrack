@@ -12,8 +12,6 @@ import process from 'process';
 const execAsync = promisify(exec);
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 interface GitServiceEvents {
   commit: (message: string) => void;
@@ -563,12 +561,6 @@ export class GitService extends EventEmitter {
       const statsExists = fs.existsSync(dashboardFile);
 
       if (isNewUser || !statsExists) {
-        // Copy dashboard component to stats directory
-        await fs.promises.copyFile(
-          path.join(__dirname, 'components', 'CodingStatsDashboard.js'),
-          path.join(this.statsDir, 'dashboard.js')
-        );
-
         // Create initial commit for statistics
         await this.git.add(path.join(this.statsDir, '*'));
         await this.git.commit(
