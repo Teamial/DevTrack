@@ -282,40 +282,62 @@ export class GitService extends EventEmitter {
         throw new Error('Git not initialized');
       }
 
-      const branches = await this.git.branch();
-      const currentBranch = branches.current || 'main';
-
-      // Create and checkout main branch if it doesn't exist
-      if (!branches.all.includes('main')) {
-        await this.git.checkoutLocalBranch('main');
+      // Initialize the repository with an empty commit if needed
+      const isRepo = await this.git.checkIsRepo();
+      if (!isRepo) {
+        await this.git.init();
+        // Create an empty .gitkeep to ensure we can create the initial commit
+        const gitkeepPath = path.join(this.currentTrackingDir, '.gitkeep');
+        await fs.promises.writeFile(gitkeepPath, '');
+        await this.git.add('.gitkeep');
+        await this.git.commit('DevTrack: Initialize tracking repository');
       }
 
-      // Ensure we're on a branch before pushing
-      if (!branches.current) {
-        await this.git.checkout('main');
-      }
-
-      // Instead of pulling all files, we'll only push our changes
+      // Ensure we're on main branch
       try {
-        // Set upstream without pulling
-        await this.git.push([
-          '--set-upstream',
-          'origin',
-          currentBranch,
-          '--force',
-        ]);
+        const branches = await this.git.branch();
+
+        // If main branch doesn't exist, create it
+        if (!branches.all.includes('main')) {
+          // Create and checkout main branch
+          await this.git.raw(['checkout', '-b', 'main']);
+          this.outputChannel.appendLine(
+            'DevTrack: Created and checked out main branch'
+          );
+        } else {
+          // Switch to main branch if it exists
+          await this.git.checkout('main');
+          this.outputChannel.appendLine(
+            'DevTrack: Switched to existing main branch'
+          );
+        }
+
+        // Set up tracking with origin/main
+        try {
+          await this.git.push(['--set-upstream', 'origin', 'main']);
+          this.outputChannel.appendLine(
+            'DevTrack: Set up tracking with origin/main'
+          );
+        } catch (pushError: any) {
+          if (pushError.message.includes('no upstream branch')) {
+            // Force push to establish the branch
+            await this.git.push(['-u', 'origin', 'main', '--force']);
+            this.outputChannel.appendLine(
+              'DevTrack: Established main branch on remote'
+            );
+          } else {
+            throw pushError;
+          }
+        }
+      } catch (error: any) {
         this.outputChannel.appendLine(
-          `DevTrack: Set upstream tracking for ${currentBranch}`
-        );
-      } catch (error) {
-        this.outputChannel.appendLine(
-          `DevTrack: Failed to set upstream - ${error}`
+          `DevTrack: Branch setup error - ${error.message}`
         );
         throw error;
       }
-    } catch (error) {
+    } catch (error: any) {
       this.outputChannel.appendLine(
-        `DevTrack: Error in setupRemoteTracking - ${error}`
+        `DevTrack: Error in setupRemoteTracking - ${error.message}`
       );
       throw error;
     }
@@ -396,7 +418,30 @@ export class GitService extends EventEmitter {
       throw error;
     }
   }
+  // Add a .gitignore to ensure we don't track workspace files
+  private async setupGitignore(): Promise<void> {
+    const gitignorePath = path.join(this.currentTrackingDir, '.gitignore');
+    const gitignoreContent = `
+# DevTrack - Only track specific directories
+/*
 
+# Allow DevTrack directories
+!/stats/
+!/changes/
+!/.gitignore
+!/.gitkeep
+
+# Ensure no workspace files are tracked
+*.workspace
+*.code-workspace
+.vscode/
+node_modules/
+`;
+
+    await fs.promises.writeFile(gitignorePath, gitignoreContent);
+    await this.git.add('.gitignore');
+    await this.git.commit('DevTrack: Add gitignore to protect workspace');
+  }
   public async initializeRepo(remoteUrl: string): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
@@ -406,6 +451,7 @@ export class GitService extends EventEmitter {
 
         // Initialize Git first
         await this.ensureGitInitialized();
+        await this.setupGitignore();
         await this.createTrackingDirectory();
 
         const changesDir = path.join(this.currentTrackingDir, 'changes');
