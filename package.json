@@ -9,7 +9,6 @@
     "url": "https://github.com/Teamial/DevTrack/tree/master"
   },
   "license": "MIT",
-  "type": "module",
   "engines": {
     "vscode": "^1.96.0"
   },

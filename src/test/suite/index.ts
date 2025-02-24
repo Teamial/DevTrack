@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+/* eslint-disable no-undef */
 import * as path from 'path';
 import Mocha from 'mocha';
 import { glob } from 'glob';

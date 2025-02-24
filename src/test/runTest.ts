@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+/* eslint-disable no-undef */
 import { resolve } from 'path';
 import type { TestOptions } from '@vscode/test-electron';
 import { runTests } from '@vscode/test-electron';
