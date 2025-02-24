@@ -13,6 +13,33 @@ const execAsync = promisify(exec);
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 
+interface TimeDistribution {
+  hour: number;
+  changes: number;
+}
+
+interface ActivityTimelineEntry {
+  date: string;
+  commits: number;
+  filesChanged: number;
+}
+
+interface FileTypeStats {
+  name: string;
+  count: number;
+  percentage: number;
+}
+
+interface DevTrackStats {
+  totalTime: number;
+  filesModified: number;
+  totalCommits: number;
+  linesChanged: number;
+  activityTimeline: ActivityTimelineEntry[];
+  timeDistribution: TimeDistribution[];
+  fileTypes: FileTypeStats[];
+}
+
 interface GitServiceEvents {
   commit: (message: string) => void;
   error: (error: Error) => void;
@@ -41,6 +68,7 @@ interface TrackingMetadata {
   }>;
 }
 export class GitService extends EventEmitter {
+  private processQueue: Promise<any> = Promise.resolve();
   private git!: SimpleGit;
   private repoPath!: string;
   private currentTrackingDir: string = '';
@@ -50,6 +78,8 @@ export class GitService extends EventEmitter {
   private hasInitializedStats: boolean = false;
   private static MAX_RETRIES = 3;
   private static RETRY_DELAY = 1000;
+  private static readonly PROCESS_LIMIT = 5;
+  private activeProcesses = 0;
   private readonly isWindows: boolean = process.platform === 'win32';
   private static readonly MAX_LISTENERS = 10;
   private boundListeners: Set<{
@@ -85,6 +115,42 @@ export class GitService extends EventEmitter {
         );
       });
     }
+  }
+
+  private async withProcessLimit<T>(operation: () => Promise<T>): Promise<T> {
+    while (this.activeProcesses >= GitService.PROCESS_LIMIT) {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+    }
+
+    this.activeProcesses++;
+    try {
+      return await operation();
+    } finally {
+      this.activeProcesses--;
+    }
+  }
+
+  private async withRetry<T>(
+    operation: () => Promise<T>,
+    retries = GitService.MAX_RETRIES
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        return await this.withProcessLimit(operation);
+      } catch (error: any) {
+        if (error.message?.includes('EAGAIN') && attempt < retries) {
+          this.outputChannel.appendLine(
+            `DevTrack: Git process limit reached, retrying (${attempt}/${retries})...`
+          );
+          await new Promise((resolve) =>
+            globalThis.setTimeout(resolve, GitService.RETRY_DELAY * attempt)
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error('Maximum retry attempts reached');
   }
 
   // Type-safe event emitter methods
@@ -372,6 +438,89 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async setupGitHubWorkflow(): Promise<void> {
+    try {
+      // Create .github/workflows directory in tracking repo
+      const workflowsDir = path.join(
+        this.currentTrackingDir,
+        '.github',
+        'workflows'
+      );
+      await fs.promises.mkdir(workflowsDir, { recursive: true });
+
+      // Create build-and-deploy.yml
+      const workflowPath = path.join(workflowsDir, 'build-and-deploy.yml');
+      const workflowContent = `name: Build and Deploy Stats
+  
+  on:
+    push:
+      branches: [ main ]
+      paths:
+        - 'stats/**'
+        - 'stats-data/**'
+  
+  jobs:
+    build-and-deploy:
+      runs-on: ubuntu-latest
+      permissions:
+        pages: write
+        id-token: write
+      environment:
+        name: github-pages
+        url: \${{ steps.deployment.outputs.page_url }}
+      steps:
+        - uses: actions/checkout@v3
+        
+        - name: Set up Node.js
+          uses: actions/setup-node@v3
+          with:
+            node-version: '18'
+            cache: 'npm'
+            
+        - name: Install Dependencies
+          run: |
+            cd stats
+            npm install
+            
+        - name: Build Website
+          run: |
+            cd stats
+            npm run build
+            
+        - name: Setup Pages
+          uses: actions/configure-pages@v4
+          
+        - name: Upload artifact
+          uses: actions/upload-pages-artifact@v3
+          with:
+            path: stats/dist
+            
+        - name: Deploy to GitHub Pages
+          id: deployment
+          uses: actions/deploy-pages@v4`;
+
+      await fs.promises.writeFile(workflowPath, workflowContent);
+
+      // Add and commit the workflow file
+      await this.git.add(workflowPath);
+      await this.git.commit(
+        'DevTrack: Add GitHub Actions workflow for stats website'
+      );
+
+      const currentBranch = (await this.git.branch()).current;
+      await this.git.push('origin', currentBranch);
+
+      this.outputChannel.appendLine(
+        'DevTrack: GitHub Actions workflow setup complete'
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error setting up GitHub Actions workflow - ${error}`
+      );
+      throw error;
+    }
+  }
+
   private async initializeTracking(): Promise<void> {
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -453,6 +602,7 @@ node_modules/
         await this.ensureGitInitialized();
         await this.setupGitignore();
         await this.createTrackingDirectory();
+        await this.setupGitHubWorkflow();
 
         const changesDir = path.join(this.currentTrackingDir, 'changes');
         if (!fs.existsSync(changesDir)) {
@@ -592,7 +742,6 @@ node_modules/
     }
   }
 
-  // Update the initializeStatistics method in GitService class
   private async initializeStatistics(isNewUser: boolean): Promise<void> {
     if (this.hasInitializedStats) {
       return;
@@ -675,6 +824,236 @@ node_modules/
       // Don't throw the error - allow the app to continue without stats
       this.hasInitializedStats = false;
     }
+  }
+
+  private async updateStatsData(stats: any): Promise<void> {
+    try {
+      const statsDir = path.join(this.currentTrackingDir, 'stats');
+      const dataDir = path.join(statsDir, 'data');
+
+      // Ensure directories exist
+      await fs.promises.mkdir(dataDir, { recursive: true });
+
+      // Update stats data
+      const statsDataPath = path.join(dataDir, 'stats.json');
+      await fs.promises.writeFile(
+        statsDataPath,
+        JSON.stringify(stats, null, 2)
+      );
+
+      // Create package.json if it doesn't exist
+      const packageJsonPath = path.join(statsDir, 'package.json');
+      if (!fs.existsSync(packageJsonPath)) {
+        const packageJson = {
+          name: 'devtrack-stats',
+          private: true,
+          version: '0.0.0',
+          type: 'module',
+          scripts: {
+            dev: 'vite',
+            build: 'vite build',
+            preview: 'vite preview',
+          },
+          dependencies: {
+            '@types/react': '^18.2.55',
+            '@types/react-dom': '^18.2.19',
+            '@vitejs/plugin-react': '^4.2.1',
+            react: '^18.2.0',
+            'react-dom': '^18.2.0',
+            recharts: '^2.12.0',
+            vite: '^5.1.0',
+          },
+        };
+
+        await fs.promises.writeFile(
+          packageJsonPath,
+          JSON.stringify(packageJson, null, 2)
+        );
+      }
+
+      // Create vite.config.js if it doesn't exist
+      const viteConfigPath = path.join(statsDir, 'vite.config.js');
+      if (!fs.existsSync(viteConfigPath)) {
+        const viteConfig = `
+  import { defineConfig } from 'vite'
+  import react from '@vitejs/plugin-react'
+  
+  export default defineConfig({
+    plugins: [react()],
+    base: '/code-tracking/stats/',
+  })`;
+
+        await fs.promises.writeFile(viteConfigPath, viteConfig);
+      }
+
+      // Create index.html if it doesn't exist
+      const indexPath = path.join(statsDir, 'index.html');
+      if (!fs.existsSync(indexPath)) {
+        const indexHtml = `
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>DevTrack Statistics</title>
+    </head>
+    <body>
+      <div id="root"></div>
+      <script type="module" src="/src/main.tsx"></script>
+    </body>
+  </html>`;
+
+        await fs.promises.writeFile(indexPath, indexHtml);
+      }
+
+      // Create main.tsx if it doesn't exist
+      const srcDir = path.join(statsDir, 'src');
+      await fs.promises.mkdir(srcDir, { recursive: true });
+
+      const mainPath = path.join(srcDir, 'main.tsx');
+      if (!fs.existsSync(mainPath)) {
+        const mainTsx = `
+  import React from 'react'
+  import ReactDOM from 'react-dom/client'
+  import CodingStatsDashboard from './components/CodingStatsDashboard'
+  import './index.css'
+  
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <CodingStatsDashboard />
+    </React.StrictMode>,
+  )`;
+
+        await fs.promises.writeFile(mainPath, mainTsx);
+      }
+
+      // Create basic CSS
+      const cssPath = path.join(srcDir, 'index.css');
+      if (!fs.existsSync(cssPath)) {
+        const css = `
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities;`;
+
+        await fs.promises.writeFile(cssPath, css);
+      }
+
+      // Copy your existing components
+      const componentsDir = path.join(srcDir, 'components');
+      await fs.promises.mkdir(componentsDir, { recursive: true });
+
+      const uiDir = path.join(componentsDir, 'ui');
+      await fs.promises.mkdir(uiDir, { recursive: true });
+
+      // Add to Git
+      await this.git.add(statsDir);
+      await this.git.commit('DevTrack: Update statistics data and website');
+
+      const currentBranch = (await this.git.branch()).current;
+      await this.git.push('origin', currentBranch);
+
+      this.outputChannel.appendLine(
+        'DevTrack: Statistics data updated and pushed'
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `DevTrack: Error updating stats data - ${error}`
+      );
+      throw error;
+    }
+  }
+
+  private async getUpdatedStats(): Promise<DevTrackStats> {
+    // Get updated statistics based on recent commits
+    const log = await this.git.log();
+    const now = new Date();
+
+    const stats: DevTrackStats = {
+      totalTime: 0,
+      filesModified: 0,
+      totalCommits: log.total,
+      linesChanged: 0,
+      activityTimeline: [] as ActivityTimelineEntry[],
+      timeDistribution: [] as TimeDistribution[],
+      fileTypes: [] as FileTypeStats[],
+    };
+
+    // Initialize timeDistribution array with all hours
+    for (let i = 0; i < 24; i++) {
+      stats.timeDistribution.push({ hour: i, changes: 0 });
+    }
+
+    // Create a map to accumulate timeline data
+    const timelineMap = new Map<string, ActivityTimelineEntry>();
+
+    // Process commits
+    for (const commit of log.all) {
+      const commitDate = new Date(commit.date);
+      const hourOfDay = commitDate.getHours();
+
+      // Update time distribution
+      stats.timeDistribution[hourOfDay].changes++;
+
+      // Update activity timeline
+      const dateKey = commitDate.toISOString().split('T')[0];
+      if (!timelineMap.has(dateKey)) {
+        timelineMap.set(dateKey, {
+          date: dateKey,
+          commits: 0,
+          filesChanged: 0,
+        });
+      }
+
+      const timelineEntry = timelineMap.get(dateKey)!;
+      timelineEntry.commits++;
+
+      // Estimate files changed from commit message
+      const filesChanged = commit.message
+        .split('\n')
+        .filter((line) => line.trim().startsWith('-')).length;
+      timelineEntry.filesChanged += filesChanged || 1; // At least 1 file per commit
+    }
+
+    // Convert timeline map to array and sort by date
+    stats.activityTimeline = Array.from(timelineMap.values()).sort((a, b) =>
+      a.date.localeCompare(b.date)
+    );
+
+    // Calculate total modified files
+    stats.filesModified = stats.activityTimeline.reduce(
+      (total, entry) => total + entry.filesChanged,
+      0
+    );
+
+    // Estimate total time (30 minutes per commit as a rough estimate)
+    stats.totalTime = Math.round((stats.totalCommits * 30) / 60); // Convert to hours
+
+    // Calculate file types from recent commits
+    const fileTypesMap = new Map<string, number>();
+    for (const commit of log.all.slice(0, 100)) {
+      // Look at last 100 commits
+      const files =
+        commit.message.match(/\.(ts|js|tsx|jsx|css|html|md)x?/g) || [];
+      for (const file of files) {
+        const ext = file.replace('.', '').toLowerCase();
+        fileTypesMap.set(ext, (fileTypesMap.get(ext) || 0) + 1);
+      }
+    }
+
+    // Convert file types to array with percentages
+    const totalFiles = Array.from(fileTypesMap.values()).reduce(
+      (a, b) => a + b,
+      0
+    );
+    stats.fileTypes = Array.from(fileTypesMap.entries()).map(
+      ([name, count]) => ({
+        name: name.toUpperCase(),
+        count,
+        percentage: Math.round((count / totalFiles) * 100),
+      })
+    );
+
+    return stats;
   }
 
   private async verifyCommitTracking(message: string): Promise<void> {
@@ -779,6 +1158,8 @@ node_modules/
         });
 
         this.emitSafe('operation:end', 'commitAndPush');
+        const stats = await this.getUpdatedStats();
+        await this.updateStatsData(stats);
       } catch (error: any) {
         this.outputChannel.appendLine(
           `DevTrack: Git commit failed - ${error.message}`
@@ -936,149 +1317,149 @@ node_modules/
     }
   }
 
-  private async cleanupGitLocks(): Promise<void> {
-    try {
-      const gitDir = path.join(this.currentTrackingDir, '.git');
-      const lockFiles = ['index.lock', 'HEAD.lock'];
+  // private async cleanupGitLocks(): Promise<void> {
+  //   try {
+  //     const gitDir = path.join(this.currentTrackingDir, '.git');
+  //     const lockFiles = ['index.lock', 'HEAD.lock'];
 
-      for (const lockFile of lockFiles) {
-        const lockPath = path.join(gitDir, lockFile);
-        if (fs.existsSync(lockPath)) {
-          try {
-            fs.unlinkSync(lockPath);
-          } catch (error) {
-            this.outputChannel.appendLine(
-              `DevTrack: Could not remove lock file ${lockPath}: ${error}`
-            );
-          }
-        }
-      }
-    } catch (error) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error cleaning up Git locks: ${error}`
-      );
-    }
-  }
+  //     for (const lockFile of lockFiles) {
+  //       const lockPath = path.join(gitDir, lockFile);
+  //       if (fs.existsSync(lockPath)) {
+  //         try {
+  //           fs.unlinkSync(lockPath);
+  //         } catch (error) {
+  //           this.outputChannel.appendLine(
+  //             `DevTrack: Could not remove lock file ${lockPath}: ${error}`
+  //           );
+  //         }
+  //       }
+  //     }
+  //   } catch (error) {
+  //     this.outputChannel.appendLine(
+  //       `DevTrack: Error cleaning up Git locks: ${error}`
+  //     );
+  //   }
+  // }
 
-  private async initGitConfig() {
-    try {
-      if (!this.git) {
-        throw new Error('Git not initialized');
-      }
+  // private async initGitConfig() {
+  //   try {
+  //     if (!this.git) {
+  //       throw new Error('Git not initialized');
+  //     }
 
-      await this.git.addConfig('core.autocrlf', 'true');
-      await this.git.addConfig('core.safecrlf', 'false');
-      await this.git.addConfig('core.longpaths', 'true');
+  //     await this.git.addConfig('core.autocrlf', 'true');
+  //     await this.git.addConfig('core.safecrlf', 'false');
+  //     await this.git.addConfig('core.longpaths', 'true');
 
-      if (this.isWindows) {
-        await this.git.addConfig('core.quotepath', 'false');
-        await this.git.addConfig('core.ignorecase', 'true');
-      }
-    } catch (error) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error initializing Git config: ${error}`
-      );
-      throw error;
-    }
-  }
+  //     if (this.isWindows) {
+  //       await this.git.addConfig('core.quotepath', 'false');
+  //       await this.git.addConfig('core.ignorecase', 'true');
+  //     }
+  //   } catch (error) {
+  //     this.outputChannel.appendLine(
+  //       `DevTrack: Error initializing Git config: ${error}`
+  //     );
+  //     throw error;
+  //   }
+  // }
 
-  private async verifyGitConfig(): Promise<void> {
-    try {
-      // Get Git executable path with proper escaping for Windows
-      const gitPath = this.findGitExecutable();
-      const normalizedGitPath = this.isWindows
-        ? gitPath.replace(/\\/g, '/')
-        : gitPath;
+  // private async verifyGitConfig(): Promise<void> {
+  //   try {
+  //     // Get Git executable path with proper escaping for Windows
+  //     const gitPath = this.findGitExecutable();
+  //     const normalizedGitPath = this.isWindows
+  //       ? gitPath.replace(/\\/g, '/')
+  //       : gitPath;
 
-      // Basic Git version check
-      try {
-        const versionCmd = this.isWindows
-          ? `"${normalizedGitPath}"`
-          : normalizedGitPath;
-        execSync(`${versionCmd} --version`, { encoding: 'utf8' });
-        this.outputChannel.appendLine(
-          `DevTrack: Successfully verified Git at: ${normalizedGitPath}`
-        );
-      } catch (error: any) {
-        throw new Error(`Git executable validation failed: ${error.message}`);
-      }
+  //     // Basic Git version check
+  //     try {
+  //       const versionCmd = this.isWindows
+  //         ? `"${normalizedGitPath}"`
+  //         : normalizedGitPath;
+  //       execSync(`${versionCmd} --version`, { encoding: 'utf8' });
+  //       this.outputChannel.appendLine(
+  //         `DevTrack: Successfully verified Git at: ${normalizedGitPath}`
+  //       );
+  //     } catch (error: any) {
+  //       throw new Error(`Git executable validation failed: ${error.message}`);
+  //     }
 
-      // Test Git configuration with normalized paths
-      const testGit = simpleGit({
-        baseDir: this.repoPath,
-        binary: normalizedGitPath,
-        maxConcurrentProcesses: 1,
-        unsafe: {
-          allowUnsafeCustomBinary: true,
-        },
-        ...(this.isWindows && {
-          config: [
-            'core.quotePath=false',
-            'core.preloadIndex=true',
-            'core.fscache=true',
-            'core.ignorecase=true',
-          ],
-        }),
-      });
+  //     // Test Git configuration with normalized paths
+  //     const testGit = simpleGit({
+  //       baseDir: this.repoPath,
+  //       binary: normalizedGitPath,
+  //       maxConcurrentProcesses: 1,
+  //       unsafe: {
+  //         allowUnsafeCustomBinary: true,
+  //       },
+  //       ...(this.isWindows && {
+  //         config: [
+  //           'core.quotePath=false',
+  //           'core.preloadIndex=true',
+  //           'core.fscache=true',
+  //           'core.ignorecase=true',
+  //         ],
+  //       }),
+  //     });
 
-      // Verify basic Git configuration
-      await testGit.raw(['config', '--list']);
-      this.outputChannel.appendLine('DevTrack: Git configuration verified');
+  //     // Verify basic Git configuration
+  //     await testGit.raw(['config', '--list']);
+  //     this.outputChannel.appendLine('DevTrack: Git configuration verified');
 
-      // Check repository state
-      const isRepo = await testGit.checkIsRepo();
-      if (isRepo) {
-        const remotes = await testGit.getRemotes(true);
-        if (remotes.length === 0) {
-          this.outputChannel.appendLine('DevTrack: No remote configured');
-        }
-      }
+  //     // Check repository state
+  //     const isRepo = await testGit.checkIsRepo();
+  //     if (isRepo) {
+  //       const remotes = await testGit.getRemotes(true);
+  //       if (remotes.length === 0) {
+  //         this.outputChannel.appendLine('DevTrack: No remote configured');
+  //       }
+  //     }
 
-      // Windows-specific checks
-      if (this.isWindows) {
-        try {
-          await testGit.raw(['config', '--system', '--list']);
-          this.outputChannel.appendLine(
-            'DevTrack: Windows Git system configuration verified'
-          );
-        } catch (error) {
-          // Don't throw on system config access issues
-          this.outputChannel.appendLine(
-            'DevTrack: System Git config check skipped (normal on some Windows setups)'
-          );
-        }
-      }
-    } catch (error: any) {
-      this.outputChannel.appendLine(
-        `DevTrack: Git config verification failed - ${error.message}`
-      );
-      throw new Error(`Git configuration error: ${error.message}`);
-    }
-  }
+  //     // Windows-specific checks
+  //     if (this.isWindows) {
+  //       try {
+  //         await testGit.raw(['config', '--system', '--list']);
+  //         this.outputChannel.appendLine(
+  //           'DevTrack: Windows Git system configuration verified'
+  //         );
+  //       } catch (error) {
+  //         // Don't throw on system config access issues
+  //         this.outputChannel.appendLine(
+  //           'DevTrack: System Git config check skipped (normal on some Windows setups)'
+  //         );
+  //       }
+  //     }
+  //   } catch (error: any) {
+  //     this.outputChannel.appendLine(
+  //       `DevTrack: Git config verification failed - ${error.message}`
+  //     );
+  //     throw new Error(`Git configuration error: ${error.message}`);
+  //   }
+  // }
 
-  private async withRetry<T>(operation: () => Promise<T>): Promise<T> {
-    let lastError: Error | null = null;
+  // private async withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  //   let lastError: Error | null = null;
 
-    for (let attempt = 1; attempt <= GitService.MAX_RETRIES; attempt++) {
-      try {
-        return await operation();
-      } catch (error: any) {
-        lastError = error;
-        this.outputChannel.appendLine(
-          `DevTrack: Operation failed (attempt ${attempt}/${GitService.MAX_RETRIES}): ${error.message}`
-        );
+  //   for (let attempt = 1; attempt <= GitService.MAX_RETRIES; attempt++) {
+  //     try {
+  //       return await operation();
+  //     } catch (error: any) {
+  //       lastError = error;
+  //       this.outputChannel.appendLine(
+  //         `DevTrack: Operation failed (attempt ${attempt}/${GitService.MAX_RETRIES}): ${error.message}`
+  //       );
 
-        if (attempt < GitService.MAX_RETRIES) {
-          await new Promise((resolve) =>
-            globalThis.setTimeout(resolve, GitService.RETRY_DELAY * attempt)
-          );
-          await this.cleanupGitLocks();
-        }
-      }
-    }
+  //       if (attempt < GitService.MAX_RETRIES) {
+  //         await new Promise((resolve) =>
+  //           globalThis.setTimeout(resolve, GitService.RETRY_DELAY * attempt)
+  //         );
+  //         await this.cleanupGitLocks();
+  //       }
+  //     }
+  //   }
 
-    throw lastError;
-  }
+  //   throw lastError;
+  // }
 
   public async recordChanges(
     message: string,
@@ -1183,29 +1564,29 @@ node_modules/
     });
   }
 
-  private handleGitError(error: any): void {
-    let errorMessage = 'Git operation failed';
+  // private handleGitError(error: any): void {
+  //   let errorMessage = 'Git operation failed';
 
-    if (error.message?.includes('ENOENT')) {
-      errorMessage =
-        process.platform === 'win32'
-          ? 'Git not found. Please install Git for Windows from https://git-scm.com/download/win'
-          : 'Git is not accessible. Please ensure Git is installed.';
-    } else if (error.message?.includes('spawn git ENOENT')) {
-      errorMessage =
-        process.platform === 'win32'
-          ? 'Git not found in PATH. Please restart VS Code after installing Git.'
-          : 'Failed to spawn Git process. Please verify your Git installation.';
-    } else if (error.message?.includes('not a git repository')) {
-      errorMessage =
-        'Not a Git repository. Please initialize the repository first.';
-    }
+  //   if (error.message?.includes('ENOENT')) {
+  //     errorMessage =
+  //       process.platform === 'win32'
+  //         ? 'Git not found. Please install Git for Windows from https://git-scm.com/download/win'
+  //         : 'Git is not accessible. Please ensure Git is installed.';
+  //   } else if (error.message?.includes('spawn git ENOENT')) {
+  //     errorMessage =
+  //       process.platform === 'win32'
+  //         ? 'Git not found in PATH. Please restart VS Code after installing Git.'
+  //         : 'Failed to spawn Git process. Please verify your Git installation.';
+  //   } else if (error.message?.includes('not a git repository')) {
+  //     errorMessage =
+  //       'Not a Git repository. Please initialize the repository first.';
+  //   }
 
-    this.outputChannel.appendLine(
-      `DevTrack: ${errorMessage} - ${error.message}`
-    );
-    vscode.window.showErrorMessage(`DevTrack: ${errorMessage}`);
-  }
+  //   this.outputChannel.appendLine(
+  //     `DevTrack: ${errorMessage} - ${error.message}`
+  //   );
+  //   vscode.window.showErrorMessage(`DevTrack: ${errorMessage}`);
+  // }
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
     this.operationQueue = this.operationQueue
@@ -1222,27 +1603,32 @@ node_modules/
     return this.listenerCount(event) > 0;
   }
 
-  public async cleanup(): Promise<void> {
-    if (this.currentTrackingDir && fs.existsSync(this.currentTrackingDir)) {
-      try {
-        await fs.promises.rm(this.currentTrackingDir, {
-          recursive: true,
-          force: true,
-        });
-        this.outputChannel.appendLine(
-          'DevTrack: Tracking directory cleaned up'
-        );
-      } catch (error) {
-        this.outputChannel.appendLine(
-          'DevTrack: Failed to clean up tracking directory'
-        );
-      }
-    }
+  // public async cleanup(): Promise<void> {
+  //   if (this.currentTrackingDir && fs.existsSync(this.currentTrackingDir)) {
+  //     try {
+  //       await fs.promises.rm(this.currentTrackingDir, {
+  //         recursive: true,
+  //         force: true,
+  //       });
+  //       this.outputChannel.appendLine(
+  //         'DevTrack: Tracking directory cleaned up'
+  //       );
+  //     } catch (error) {
+  //       this.outputChannel.appendLine(
+  //         'DevTrack: Failed to clean up tracking directory'
+  //       );
+  //     }
+  //   }
+  // }
+  // Add cleanup method
+  public cleanup(): void {
+    this.activeProcesses = 0;
+    this.processQueue = Promise.resolve();
   }
 
   public dispose(): void {
     this.removeAllListeners();
     this.operationQueue = Promise.resolve();
-    this.cleanup().catch(() => {});
+    this.cleanup();
   }
 }
