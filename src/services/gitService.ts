@@ -546,41 +546,88 @@ export class GitService extends EventEmitter {
     }
   }
 
+  // Update the initializeStatistics method in GitService class
   private async initializeStatistics(isNewUser: boolean): Promise<void> {
     if (this.hasInitializedStats) {
       return;
     }
 
     try {
+      // Create stats directory if it doesn't exist
       this.statsDir = path.join(this.currentTrackingDir, 'stats');
       if (!fs.existsSync(this.statsDir)) {
         await fs.promises.mkdir(this.statsDir, { recursive: true });
-      }
 
-      const dashboardFile = path.join(this.statsDir, 'dashboard.html');
-      const statsExists = fs.existsSync(dashboardFile);
+        // Create initial dashboard files
+        const dashboardHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DevTrack Statistics</title>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>`;
 
-      if (isNewUser || !statsExists) {
-        // Create initial commit for statistics
-        await this.git.add(path.join(this.statsDir, '*'));
-        await this.git.commit(
-          'DevTrack: Initialize coding statistics dashboard'
+        await fs.promises.writeFile(
+          path.join(this.statsDir, 'index.html'),
+          dashboardHtml
         );
 
-        // Push changes
-        const currentBranch = (await this.git.branch()).current;
-        await this.git.push('origin', currentBranch);
+        // Create empty dashboard.js
+        await fs.promises.writeFile(
+          path.join(this.statsDir, 'dashboard.js'),
+          '// DevTrack Dashboard initialization'
+        );
+      }
+
+      // Initialize empty stats data
+      const initialStats = {
+        totalTime: 0,
+        filesModified: 0,
+        totalCommits: 0,
+        linesChanged: 0,
+        activityTimeline: [],
+        timeDistribution: [],
+        fileTypes: [],
+      };
+
+      const statsDataPath = path.join(this.statsDir, 'data.json');
+      if (!fs.existsSync(statsDataPath)) {
+        await fs.promises.writeFile(
+          statsDataPath,
+          JSON.stringify(initialStats, null, 2)
+        );
+      }
+
+      // Add stats directory to Git only if it's a new user
+      if (isNewUser) {
+        await this.git.add(path.join(this.statsDir, '*'));
+        await this.git.commit('DevTrack: Initialize statistics tracking');
+
+        // Push changes only if we have a remote set up
+        try {
+          const currentBranch = (await this.git.branch()).current;
+          await this.git.push('origin', currentBranch);
+        } catch (pushError) {
+          // Log push error but don't fail initialization
+          this.outputChannel.appendLine(
+            `DevTrack: Warning - Could not push initial stats: ${pushError}`
+          );
+        }
       }
 
       this.hasInitializedStats = true;
       this.outputChannel.appendLine(
-        'DevTrack: Statistics dashboard initialized'
+        'DevTrack: Statistics tracking initialized successfully'
       );
     } catch (error) {
       this.outputChannel.appendLine(
         `DevTrack: Failed to initialize statistics - ${error}`
       );
-      throw error;
+      // Don't throw the error - allow the app to continue without stats
+      this.hasInitializedStats = false;
     }
   }
 
