@@ -2,7 +2,7 @@
   "name": "devtrack",
   "displayName": "DevTrack",
   "description": "Track your coding journey effortlessly with DevTrack",
-  "version": "0.7.0",
+  "version": "6.6.0",
   "publisher": "TeannaCole",
   "repository": {
     "type": "GitHub",
@@ -32,14 +32,6 @@
     "documentation"
   ],
   "activationEvents": [
-    "onCommand:devtrack.startTracking",
-    "onCommand:devtrack.stopTracking",
-    "onCommand:devtrack.login",
-    "onCommand:devtrack.logout",
-    "onCommand:devtrack.showGitGuide",
-    "onCommand:devtrack.openFolder",
-    "onCommand:devtrack.test",
-    "onCommand:devtrack.generateWebsite",
     "onView:devtrack"
   ],
   "main": "./dist/extension.js",
