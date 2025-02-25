@@ -742,54 +742,43 @@ node_modules/
     }
   }
 
-  private async initializeStatistics(isNewUser: boolean): Promise<void> {
+  async initializeStatistics(isNewUser: boolean): Promise<void> {
     if (this.hasInitializedStats) {
       return;
     }
 
     try {
+      // Import WebsiteGenerator dynamically to avoid circular dependencies
+      const { WebsiteGenerator } = await import('./websiteGenerator');
+      const websiteGenerator = new WebsiteGenerator(
+        this.outputChannel,
+        this.currentTrackingDir
+      );
+
       // Create stats directory if it doesn't exist
       this.statsDir = path.join(this.currentTrackingDir, 'stats');
       if (!fs.existsSync(this.statsDir)) {
         await fs.promises.mkdir(this.statsDir, { recursive: true });
 
-        // Create initial dashboard files
-        const dashboardHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>DevTrack Statistics</title>
-</head>
-<body>
-  <div id="root"></div>
-</body>
-</html>`;
+        // Generate website files
+        await websiteGenerator.generateWebsite();
 
-        await fs.promises.writeFile(
-          path.join(this.statsDir, 'index.html'),
-          dashboardHtml
-        );
-
-        // Create empty dashboard.js
-        await fs.promises.writeFile(
-          path.join(this.statsDir, 'dashboard.js'),
-          '// DevTrack Dashboard initialization'
+        this.outputChannel.appendLine(
+          'DevTrack: Generated statistics website files'
         );
       }
 
-      // Initialize empty stats data
-      const initialStats = {
-        totalTime: 0,
-        filesModified: 0,
-        totalCommits: 0,
-        linesChanged: 0,
-        activityTimeline: [],
-        timeDistribution: [],
-        fileTypes: [],
-      };
+      // Create data directory for stats data
+      const dataDir = path.join(this.statsDir, 'public', 'data');
+      if (!fs.existsSync(dataDir)) {
+        await fs.promises.mkdir(dataDir, { recursive: true });
+      }
 
-      const statsDataPath = path.join(this.statsDir, 'data.json');
+      // Initialize empty stats data if it doesn't exist
+      const statsDataPath = path.join(dataDir, 'stats.json');
       if (!fs.existsSync(statsDataPath)) {
+        // Get initial stats if possible
+        const initialStats = await this.getUpdatedStats();
         await fs.promises.writeFile(
           statsDataPath,
           JSON.stringify(initialStats, null, 2)
@@ -798,8 +787,8 @@ node_modules/
 
       // Add stats directory to Git only if it's a new user
       if (isNewUser) {
-        await this.git.add(path.join(this.statsDir, '*'));
-        await this.git.commit('DevTrack: Initialize statistics tracking');
+        await this.git.add(this.statsDir);
+        await this.git.commit('DevTrack: Initialize statistics website');
 
         // Push changes only if we have a remote set up
         try {
@@ -808,7 +797,7 @@ node_modules/
         } catch (pushError) {
           // Log push error but don't fail initialization
           this.outputChannel.appendLine(
-            `DevTrack: Warning - Could not push initial stats: ${pushError}`
+            `DevTrack: Warning - Could not push initial website: ${pushError}`
           );
         }
       }
@@ -826,10 +815,10 @@ node_modules/
     }
   }
 
-  private async updateStatsData(stats: any): Promise<void> {
+  async updateStatsData(stats: any): Promise<void> {
     try {
       const statsDir = path.join(this.currentTrackingDir, 'stats');
-      const dataDir = path.join(statsDir, 'data');
+      const dataDir = path.join(statsDir, 'public', 'data');
 
       // Ensure directories exist
       await fs.promises.mkdir(dataDir, { recursive: true });
@@ -841,113 +830,9 @@ node_modules/
         JSON.stringify(stats, null, 2)
       );
 
-      // Create package.json if it doesn't exist
-      const packageJsonPath = path.join(statsDir, 'package.json');
-      if (!fs.existsSync(packageJsonPath)) {
-        const packageJson = {
-          name: 'devtrack-stats',
-          private: true,
-          version: '0.0.0',
-          type: 'module',
-          scripts: {
-            dev: 'vite',
-            build: 'vite build',
-            preview: 'vite preview',
-          },
-          dependencies: {
-            '@types/react': '^18.2.55',
-            '@types/react-dom': '^18.2.19',
-            '@vitejs/plugin-react': '^4.2.1',
-            react: '^18.2.0',
-            'react-dom': '^18.2.0',
-            recharts: '^2.12.0',
-            vite: '^5.1.0',
-          },
-        };
-
-        await fs.promises.writeFile(
-          packageJsonPath,
-          JSON.stringify(packageJson, null, 2)
-        );
-      }
-
-      // Create vite.config.js if it doesn't exist
-      const viteConfigPath = path.join(statsDir, 'vite.config.js');
-      if (!fs.existsSync(viteConfigPath)) {
-        const viteConfig = `
-  import { defineConfig } from 'vite'
-  import react from '@vitejs/plugin-react'
-  
-  export default defineConfig({
-    plugins: [react()],
-    base: '/code-tracking/stats/',
-  })`;
-
-        await fs.promises.writeFile(viteConfigPath, viteConfig);
-      }
-
-      // Create index.html if it doesn't exist
-      const indexPath = path.join(statsDir, 'index.html');
-      if (!fs.existsSync(indexPath)) {
-        const indexHtml = `
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>DevTrack Statistics</title>
-    </head>
-    <body>
-      <div id="root"></div>
-      <script type="module" src="/src/main.tsx"></script>
-    </body>
-  </html>`;
-
-        await fs.promises.writeFile(indexPath, indexHtml);
-      }
-
-      // Create main.tsx if it doesn't exist
-      const srcDir = path.join(statsDir, 'src');
-      await fs.promises.mkdir(srcDir, { recursive: true });
-
-      const mainPath = path.join(srcDir, 'main.tsx');
-      if (!fs.existsSync(mainPath)) {
-        const mainTsx = `
-  import React from 'react'
-  import ReactDOM from 'react-dom/client'
-  import CodingStatsDashboard from './components/CodingStatsDashboard'
-  import './index.css'
-  
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <React.StrictMode>
-      <CodingStatsDashboard />
-    </React.StrictMode>,
-  )`;
-
-        await fs.promises.writeFile(mainPath, mainTsx);
-      }
-
-      // Create basic CSS
-      const cssPath = path.join(srcDir, 'index.css');
-      if (!fs.existsSync(cssPath)) {
-        const css = `
-  @tailwind base;
-  @tailwind components;
-  @tailwind utilities;`;
-
-        await fs.promises.writeFile(cssPath, css);
-      }
-
-      // Copy your existing components
-      const componentsDir = path.join(srcDir, 'components');
-      await fs.promises.mkdir(componentsDir, { recursive: true });
-
-      const uiDir = path.join(componentsDir, 'ui');
-      await fs.promises.mkdir(uiDir, { recursive: true });
-
       // Add to Git
-      await this.git.add(statsDir);
-      await this.git.commit('DevTrack: Update statistics data and website');
+      await this.git.add([statsDataPath]);
+      await this.git.commit('DevTrack: Update statistics data');
 
       const currentBranch = (await this.git.branch()).current;
       await this.git.push('origin', currentBranch);

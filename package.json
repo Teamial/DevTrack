@@ -2,7 +2,7 @@
   "name": "devtrack",
   "displayName": "DevTrack",
   "description": "Track your coding journey effortlessly with DevTrack",
-  "version": "6.6.0",
+  "version": "0.5.0",
   "publisher": "TeannaCole",
   "repository": {
     "type": "GitHub",
@@ -32,11 +32,15 @@
     "documentation"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:devtrack.login",
     "onCommand:devtrack.startTracking",
     "onCommand:devtrack.stopTracking",
-    "onCommand:devtrack.logout"
+    "onCommand:devtrack.login",
+    "onCommand:devtrack.logout",
+    "onCommand:devtrack.showGitGuide",
+    "onCommand:devtrack.openFolder",
+    "onCommand:devtrack.test",
+    "onCommand:devtrack.generateWebsite",
+    "onView:devtrack"
   ],
   "main": "./dist/extension.js",
   "icon": "studio-128x128.png",
@@ -73,6 +77,11 @@
       {
         "command": "devtrack.test",
         "title": "DevTrack: Test Extension Loading"
+      },
+      {
+        "command": "devtrack.generateWebsite",
+        "title": "DevTrack: Generate Statistics Website",
+        "enablement": "workspaceFolderCount != 0"
       }
     ],
     "configuration": {

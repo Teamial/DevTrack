@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 /* eslint-disable no-unused-vars */
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -279,6 +280,104 @@ async function initializeServices(
     channel.appendLine(`DevTrack: Service initialization error - ${error}`);
     return null;
   }
+}
+
+async function registerWebsiteCommands(
+  context: vscode.ExtensionContext,
+  services: DevTrackServices
+): Promise<void> {
+  // Register command to manually generate the website
+  const generateWebsiteCommand = vscode.commands.registerCommand(
+    'devtrack.generateWebsite',
+    async () => {
+      try {
+        vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'DevTrack: Generating statistics website',
+            cancellable: false,
+          },
+          async (progress) => {
+            progress.report({ message: 'Initializing...' });
+
+            // Import WebsiteGenerator dynamically to avoid circular dependencies
+            const { WebsiteGenerator } = await import(
+              './services/websiteGenerator'
+            );
+
+            // Get home directory and tracking path
+            const homeDir = require('os').homedir();
+
+            // Create workspace-specific tracking directory
+            const workspaceId = vscode.workspace.workspaceFolders?.[0]?.uri
+              .fsPath
+              ? Buffer.from(vscode.workspace.workspaceFolders[0].uri.fsPath)
+                  .toString('base64')
+                  .replace(/[/+=]/g, '_')
+              : 'default';
+            const trackingDir = path.join(
+              homeDir,
+              '.devtrack',
+              'tracking',
+              workspaceId
+            );
+
+            progress.report({ message: 'Generating website files...' });
+
+            // Create website generator
+            const websiteGenerator = new WebsiteGenerator(
+              services.outputChannel,
+              trackingDir
+            );
+            await websiteGenerator.generateWebsite();
+
+            progress.report({ message: 'Committing changes...' });
+
+            // Instead of directly accessing git, use commitAndPush method
+            await services.gitService.commitAndPush(
+              'DevTrack: Update statistics website'
+            );
+
+            progress.report({ message: 'Done' });
+
+            // Show success message with GitHub Pages URL
+            const username = await services.githubService.getUsername();
+            const config = vscode.workspace.getConfiguration('devtrack');
+            const repoName = config.get<string>('repoName') || 'code-tracking';
+
+            if (username) {
+              const pagesUrl = `https://${username}.github.io/${repoName}/`;
+
+              const viewWebsite = 'View Website';
+              vscode.window
+                .showInformationMessage(
+                  `DevTrack: Statistics website generated and pushed to GitHub. It should be available soon at ${pagesUrl}`,
+                  viewWebsite
+                )
+                .then((selection) => {
+                  if (selection === viewWebsite) {
+                    vscode.env.openExternal(vscode.Uri.parse(pagesUrl));
+                  }
+                });
+            } else {
+              vscode.window.showInformationMessage(
+                'DevTrack: Statistics website generated and pushed to GitHub. It should be available soon.'
+              );
+            }
+          }
+        );
+      } catch (error: any) {
+        services.outputChannel.appendLine(
+          `DevTrack: Failed to generate website - ${error.message}`
+        );
+        vscode.window.showErrorMessage(
+          `DevTrack: Failed to generate website - ${error.message}`
+        );
+      }
+    }
+  );
+
+  context.subscriptions.push(generateWebsiteCommand);
 }
 
 // Status Bar Creation
