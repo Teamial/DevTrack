@@ -1,4 +1,5 @@
 // src/services/tracker.ts
+import { setTimeout, clearTimeout } from 'node:timers';
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
 import { minimatch } from 'minimatch';
@@ -29,7 +30,7 @@ export class Tracker extends EventEmitter {
   private trackingDir: string;
   private isInitialized: boolean = false;
   private isTracking: boolean = false;
-  
+
   // New activity tracking
   private activityTimeout: NodeJS.Timeout | null = null;
   private keystrokeCount: number = 0;
@@ -39,9 +40,9 @@ export class Tracker extends EventEmitter {
     activeTime: 0,
     fileChanges: 0,
     keystrokes: 0,
-    lastActiveTimestamp: new Date()
+    lastActiveTimestamp: new Date(),
   };
-  
+
   // Track idle time (default 5 minutes)
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000;
   // Suppress frequent logging
@@ -147,7 +148,7 @@ export class Tracker extends EventEmitter {
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length > 0) {
         this.keystrokeCount += event.contentChanges.reduce(
-          (total, change) => total + (change.text?.length || 0), 
+          (total, change) => total + (change.text?.length || 0),
           0
         );
         this.recordActivity();
@@ -163,7 +164,7 @@ export class Tracker extends EventEmitter {
     vscode.window.onDidChangeTextEditorSelection(() => {
       this.recordActivity();
     });
-    
+
     // Start active time tracking
     this.startActivityTracking();
   }
@@ -181,60 +182,69 @@ export class Tracker extends EventEmitter {
   }
 
   private startActivityTracking() {
-    if (!this.isTracking) return;
-    
+    if (!this.isTracking) {
+      return;
+    }
+
     if (!this.activeStartTime) {
       this.activeStartTime = new Date();
       this.logThrottled('Starting activity tracking');
     }
-    
+
     // Clear any existing timeout
     if (this.activityTimeout) {
       clearTimeout(this.activityTimeout);
     }
-    
+
     // Set a new timeout to detect inactivity
     this.activityTimeout = setTimeout(() => {
       this.pauseActivityTracking();
     }, this.IDLE_TIMEOUT_MS);
   }
-  
+
   private pauseActivityTracking() {
     if (this.activeStartTime) {
       // Calculate active time
       const now = new Date();
-      const activeTime = (now.getTime() - this.activeStartTime.getTime()) / 1000;
+      const activeTime =
+        (now.getTime() - this.activeStartTime.getTime()) / 1000;
       this.totalActiveTime += activeTime;
       this.activeStartTime = null;
-      
+
       this.activityMetrics.activeTime = this.totalActiveTime;
       this.activityMetrics.keystrokes = this.keystrokeCount;
-      
-      this.log(`Activity paused. Active time: ${Math.round(this.totalActiveTime / 60)} minutes`);
-      
+
+      this.log(
+        `Activity paused. Active time: ${Math.round(this.totalActiveTime / 60)} minutes`
+      );
+
       // Emit metrics event so other services can use it
       this.emit('activityMetrics', this.activityMetrics);
     }
-    
+
     if (this.activityTimeout) {
       clearTimeout(this.activityTimeout);
       this.activityTimeout = null;
     }
   }
-  
+
   private recordActivity() {
-    if (!this.isTracking) return;
-    
+    if (!this.isTracking) {
+      return;
+    }
+
     this.activityMetrics.lastActiveTimestamp = new Date();
     this.startActivityTracking(); // Restart the idle timer
   }
 
-  private async analyzeFileContent(uri: vscode.Uri): Promise<{lineCount: number, charCount: number}> {
+  private async analyzeFileContent(
+    uri: vscode.Uri
+  ): Promise<{ lineCount: number; charCount: number }> {
     try {
       const document = await vscode.workspace.openTextDocument(uri);
       return {
         lineCount: document.lineCount,
-        charCount: document.getText().length
+        charCount: document.getText().length,
       };
     } catch (error) {
       return { lineCount: 0, charCount: 0 };
@@ -259,15 +269,38 @@ export class Tracker extends EventEmitter {
     // Check file extension
     const fileExt = path.extname(filePath).toLowerCase().slice(1);
     const trackedExtensions = [
-      'ts', 'js', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'css',
-      'scss', 'html', 'jsx', 'tsx', 'vue', 'php', 'rb', 'go',
-      'rs', 'swift', 'md', 'json', 'yml', 'yaml'
+      'ts',
+      'js',
+      'py',
+      'java',
+      'c',
+      'cpp',
+      'h',
+      'hpp',
+      'css',
+      'scss',
+      'html',
+      'jsx',
+      'tsx',
+      'vue',
+      'php',
+      'rb',
+      'go',
+      'rs',
+      'swift',
+      'md',
+      'json',
+      'yml',
+      'yaml',
     ];
 
     return Boolean(fileExt) && trackedExtensions.includes(fileExt);
   }
 
-  private async handleChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
+  private async handleChange(
+    uri: vscode.Uri,
+    type: 'added' | 'changed' | 'deleted'
+  ) {
     try {
       if (!this.isInitialized) {
         this.log('Watcher not initialized, reinitializing...');
@@ -301,7 +334,7 @@ export class Tracker extends EventEmitter {
         timestamp: new Date(),
         type,
         lineCount: metrics.lineCount,
-        charCount: metrics.charCount
+        charCount: metrics.charCount,
       };
 
       this.changes.set(uri.fsPath, change);
@@ -334,21 +367,23 @@ export class Tracker extends EventEmitter {
     this.log('Reinitializing tracker...');
     await this.initialize();
   }
-  
+
   // Returns activity metrics for the current session
   getActivityMetrics(): ActivityMetrics {
     // If currently active, update the active time
     if (this.activeStartTime) {
       const now = new Date();
-      const currentActiveTime = (now.getTime() - this.activeStartTime.getTime()) / 1000;
-      this.activityMetrics.activeTime = this.totalActiveTime + currentActiveTime;
+      const currentActiveTime =
+        (now.getTime() - this.activeStartTime.getTime()) / 1000;
+      this.activityMetrics.activeTime =
+        this.totalActiveTime + currentActiveTime;
     } else {
       this.activityMetrics.activeTime = this.totalActiveTime;
     }
-    
+
     return this.activityMetrics;
   }
-  
+
   // Reset metrics after they've been committed
   resetMetrics() {
     this.totalActiveTime = 0;
@@ -357,14 +392,14 @@ export class Tracker extends EventEmitter {
       activeTime: 0,
       fileChanges: 0,
       keystrokes: 0,
-      lastActiveTimestamp: new Date()
+      lastActiveTimestamp: new Date(),
     };
   }
 
   private log(message: string) {
     this.outputChannel.appendLine(`DevTrack: ${message}`);
   }
-  
+
   private logThrottled(message: string) {
     const now = Date.now();
     if (now - this.lastLogTimestamp > this.LOG_THROTTLE_MS) {
@@ -379,7 +414,7 @@ export class Tracker extends EventEmitter {
       this.isInitialized = false;
       this.log('Disposed file system watcher');
     }
-    
+
     if (this.activityTimeout) {
       clearTimeout(this.activityTimeout);
       this.activityTimeout = null;

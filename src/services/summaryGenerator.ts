@@ -150,57 +150,60 @@ export class SummaryGenerator {
     if (seconds < 60) {
       return `${seconds} seconds`;
     }
-    
+
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) {
       return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
     }
-    
+
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
-    
+
     if (remainingMinutes === 0) {
       return `${hours} hour${hours !== 1 ? 's' : ''}`;
     } else {
       return `${hours} hour${hours !== 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}`;
     }
   }
-  
-  private formatActivitySummary(metrics: ActivityMetrics, changeType: ChangeType): string {
+
+  private formatActivitySummary(
+    metrics: ActivityMetrics,
+    changeType: ChangeType
+  ): string {
     const formattedDuration = this.formatDuration(metrics.activeTime);
-    
+
     let activitySummary = `Active coding time: ${formattedDuration}`;
-    
+
     if (metrics.keystrokes > 0) {
       activitySummary += `, ${metrics.keystrokes} keystrokes`;
     }
-    
+
     if (metrics.fileChanges > 0) {
       activitySummary += `, ${metrics.fileChanges} file change events`;
     }
-    
+
     // Add change type description
-    let changeDescription = "";
+    let changeDescription = '';
     switch (changeType) {
       case 'feature':
-        changeDescription = "✨ Feature development";
+        changeDescription = '✨ Feature development';
         break;
       case 'bugfix':
-        changeDescription = "🐛 Bug fixing";
+        changeDescription = '🐛 Bug fixing';
         break;
       case 'refactor':
-        changeDescription = "♻️ Code refactoring";
+        changeDescription = '♻️ Code refactoring';
         break;
       case 'docs':
-        changeDescription = "📝 Documentation";
+        changeDescription = '📝 Documentation';
         break;
       case 'style':
-        changeDescription = "💄 Styling/formatting";
+        changeDescription = '💄 Styling/formatting';
         break;
       default:
-        changeDescription = "👨‍💻 Coding session";
+        changeDescription = '👨‍💻 Coding session';
     }
-    
+
     return `${changeDescription} (${activitySummary})`;
   }
 
@@ -212,17 +215,21 @@ export class SummaryGenerator {
       const timestamp = new Date().toISOString();
       const localTime = new Date().toLocaleString();
       let summary = `DevTrack Update - ${localTime}\n\n`;
-      
+
       // Analyze the type of changes
-      const changeAnalysis = await this.changeAnalyzer.analyzeChanges(changedFiles);
-      
+      const changeAnalysis =
+        await this.changeAnalyzer.analyzeChanges(changedFiles);
+
       // Add activity metrics if available
       if (activityMetrics) {
-        summary += this.formatActivitySummary(activityMetrics, changeAnalysis.type) + '\n\n';
+        summary +=
+          this.formatActivitySummary(activityMetrics, changeAnalysis.type) +
+          '\n\n';
       }
 
       // Get project context
-      const projectContext = this.projectContext.getContextForSummary(changedFiles);
+      const projectContext =
+        this.projectContext.getContextForSummary(changedFiles);
       if (projectContext) {
         summary += projectContext + '\n';
       }
@@ -235,7 +242,7 @@ export class SummaryGenerator {
           snippet,
           type: change.type,
           lineCount: change.lineCount || 0,
-          charCount: change.charCount || 0
+          charCount: change.charCount || 0,
         };
       });
 
@@ -245,7 +252,9 @@ export class SummaryGenerator {
       summary += 'Changes:\n';
       changes.forEach((change) => {
         if (change.details) {
-          const metrics = change.lineCount ? ` (${change.lineCount} lines)` : '';
+          const metrics = change.lineCount
+            ? ` (${change.lineCount} lines)`
+            : '';
           summary += `- ${change.type}: ${change.details}${metrics}\n`;
         }
       });
@@ -259,9 +268,12 @@ export class SummaryGenerator {
       });
 
       // Add analysis details if confidence is high enough
-      if (changeAnalysis.confidence > 0.6 && changeAnalysis.details.length > 0) {
+      if (
+        changeAnalysis.confidence > 0.6 &&
+        changeAnalysis.details.length > 0
+      ) {
         summary += '\nAnalysis:\n';
-        changeAnalysis.details.forEach(detail => {
+        changeAnalysis.details.forEach((detail) => {
           summary += `- ${detail}\n`;
         });
       }
