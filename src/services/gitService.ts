@@ -759,6 +759,44 @@ node_modules/
       
       // Initialize statistics
       await this.initializeStatistics(false);
+
+      // Make sure tracking repo is in sync with remote before finishing setup
+try {
+  await this.git.fetch('origin', 'main');
+  
+  // Check if we have remote history
+  const remoteExists = await this.git.raw(['ls-remote', '--exit-code', 'origin', 'main']);
+  if (remoteExists) {
+    this.outputChannel.appendLine('DevTrack: Remote repository exists, syncing...');
+    
+    try {
+      // Try to merge remote content
+      await this.git.merge(['origin/main', '--allow-unrelated-histories', '--no-edit']);
+      this.outputChannel.appendLine('DevTrack: Merged remote history');
+    } catch (mergeError: any) {
+      this.outputChannel.appendLine(`DevTrack: Couldn't automatically merge - ${mergeError.message}`);
+      
+      // If merge fails, we need a more aggressive approach - get remote and recommit our changes
+      try {
+        // Get list of our files before resetting
+        const status = await this.git.status();
+        const ourFiles = status.files.map(f => f.path);
+        
+        // Pull with reset
+        await this.git.reset(['--hard', 'origin/main']);
+        this.outputChannel.appendLine('DevTrack: Reset to match remote state');
+        
+        // We'll re-add our files in the first commit
+      } catch (resetError: any) {
+        this.outputChannel.appendLine(`DevTrack: Reset failed - ${resetError.message}`);
+        // Continue anyway
+      }
+    }
+  }
+} catch (syncError: any) {
+  this.outputChannel.appendLine(`DevTrack: Repository sync skipped - ${syncError.message}`);
+  // This is normal for first-time setup, so just continue
+}
       
       this.outputChannel.appendLine('DevTrack: Repository setup completed successfully');
     } catch (error: any) {
@@ -1045,22 +1083,29 @@ node_modules/
           // Commit with the enhanced message
           await this.git.commit(updatedMessage);
           this.emitSafe('commit', updatedMessage);
-
           try {
-            await this.git.push([
-              'origin',
-              currentBranch,
-              '--force-with-lease',
-            ]);
+            // First try to sync with remote
+            try {
+              await this.git.fetch('origin', currentBranch);
+              await this.git.merge(['origin/' + currentBranch, '--allow-unrelated-histories', '--no-edit']);
+              this.outputChannel.appendLine('DevTrack: Synced with remote repository');
+            } catch (mergeError: any) {
+              this.outputChannel.appendLine(`DevTrack: Sync warning - ${mergeError.message}`);
+              // Continue anyway - we'll try to push
+            }
+          
+            // Try normal push first
+            await this.git.push(['origin', currentBranch]);
             this.emitSafe('push', currentBranch);
           } catch (pushError: any) {
             if (pushError.message.includes('no upstream branch')) {
               await this.setupRemoteTracking();
-              await this.git.push([
-                'origin',
-                currentBranch,
-                '--force-with-lease',
-              ]);
+              await this.git.push(['origin', currentBranch]);
+            } else if (pushError.message.includes('[rejected]')) {
+              // Force push as last resort if rejected
+              this.outputChannel.appendLine('DevTrack: Push rejected, using force push');
+              await this.git.push(['-f', 'origin', currentBranch]);
+              this.emitSafe('push', currentBranch);
             } else {
               throw pushError;
             }
