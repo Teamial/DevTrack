@@ -32,7 +32,8 @@
     "documentation"
   ],
   "activationEvents": [
-    "onView:devtrack"
+    "onView:devtrack",
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "icon": "studio-128x128.png",
@@ -41,41 +42,99 @@
       {
         "command": "devtrack.startTracking",
         "title": "DevTrack: Start Tracking",
-        "enablement": "workspaceFolderCount != 0"
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(play-circle)"
       },
       {
         "command": "devtrack.stopTracking",
         "title": "DevTrack: Stop Tracking",
-        "enablement": "workspaceFolderCount != 0"
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "devtrack.pauseTracking",
+        "title": "DevTrack: Pause Tracking",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "devtrack.resumeTracking",
+        "title": "DevTrack: Resume Tracking",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "devtrack.commitNow",
+        "title": "DevTrack: Commit Now",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(save-all)"
       },
       {
         "command": "devtrack.login",
         "title": "DevTrack: Login to GitHub",
-        "enablement": "workspaceFolderCount != 0"
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(github)"
       },
       {
         "command": "devtrack.logout",
-        "title": "DevTrack: Logout from GitHub"
+        "title": "DevTrack: Logout from GitHub",
+        "icon": "$(sign-out)"
       },
       {
         "command": "devtrack.showGitGuide",
-        "title": "DevTrack: Show Git Installation Guide"
+        "title": "DevTrack: Show Git Installation Guide",
+        "icon": "$(book)"
       },
       {
         "command": "devtrack.openFolder",
         "title": "DevTrack: Open Folder",
-        "enablement": "workspaceFolderCount == 0"
+        "enablement": "workspaceFolderCount == 0",
+        "icon": "$(folder-opened)"
       },
       {
-        "command": "devtrack.test",
-        "title": "DevTrack: Test Extension Loading"
+        "command": "devtrack.showDashboard",
+        "title": "DevTrack: Show Activity Dashboard",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "devtrack.generateReport",
+        "title": "DevTrack: Generate Activity Report",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(file-text)"
       },
       {
         "command": "devtrack.generateWebsite",
         "title": "DevTrack: Generate Statistics Website",
-        "enablement": "workspaceFolderCount != 0"
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "devtrack.showSettings",
+        "title": "DevTrack: Open Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "devtrack.test",
+        "title": "DevTrack: Test Extension Loading"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "devtrack.commitNow",
+          "when": "devtrack:isTracking"
+        },
+        {
+          "command": "devtrack.pauseTracking",
+          "when": "devtrack:isTracking"
+        },
+        {
+          "command": "devtrack.resumeTracking",
+          "when": "!devtrack:isTracking && devtrack:isInitialized"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "DevTrack Configuration",
@@ -88,6 +147,8 @@
         "devtrack.commitFrequency": {
           "type": "number",
           "default": 30,
+          "minimum": 5,
+          "maximum": 120,
           "description": "How often (in minutes) to commit your coding history."
         },
         "devtrack.confirmBeforeCommit": {
@@ -100,8 +161,52 @@
           "items": {
             "type": "string"
           },
-          "default": [],
+          "default": [
+            "node_modules/**",
+            ".git/**",
+            "dist/**",
+            "out/**",
+            "build/**"
+          ],
           "description": "List of glob patterns to exclude from tracking."
+        },
+        "devtrack.enableAdaptiveScheduling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically adjust commit schedule based on coding activity."
+        },
+        "devtrack.minChangesForCommit": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "Minimum number of file changes required to trigger a commit."
+        },
+        "devtrack.minActiveTimeForCommit": {
+          "type": "number",
+          "default": 60,
+          "minimum": 30,
+          "description": "Minimum active coding time (in seconds) required to trigger a commit."
+        },
+        "devtrack.trackLineChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Track number of lines changed per file."
+        },
+        "devtrack.trackKeystrokes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Track number of keystrokes during coding sessions."
+        },
+        "devtrack.maxIdleTimeBeforePause": {
+          "type": "number",
+          "default": 900,
+          "minimum": 300,
+          "description": "Maximum idle time (in seconds) before tracking is paused."
+        },
+        "devtrack.showReportOnCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a brief report after each successful commit."
         }
       }
     }

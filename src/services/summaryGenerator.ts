@@ -5,10 +5,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { Change } from './tracker';
 import { ProjectContext } from './projectContext';
+import { ActivityMetrics } from './tracker';
+import { ChangeAnalyzer, ChangeType, ChangeAnalysis } from './changeAnalyzer';
 
 export class SummaryGenerator {
   private outputChannel: vscode.OutputChannel;
   private projectContext: ProjectContext;
+  private changeAnalyzer: ChangeAnalyzer;
 
   constructor(
     outputChannel: vscode.OutputChannel,
@@ -16,6 +19,7 @@ export class SummaryGenerator {
   ) {
     this.outputChannel = outputChannel;
     this.projectContext = new ProjectContext(outputChannel, extensionContext);
+    this.changeAnalyzer = new ChangeAnalyzer(outputChannel);
   }
 
   private async getFileContent(uri: vscode.Uri): Promise<string> {
@@ -142,10 +146,86 @@ export class SummaryGenerator {
       : filename;
   }
 
-  async generateSummary(changedFiles: Change[]): Promise<string> {
+  private formatDuration(seconds: number): string {
+    if (seconds < 60) {
+      return `${seconds} seconds`;
+    }
+    
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) {
+      return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+    }
+    
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    
+    if (remainingMinutes === 0) {
+      return `${hours} hour${hours !== 1 ? 's' : ''}`;
+    } else {
+      return `${hours} hour${hours !== 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}`;
+    }
+  }
+  
+  private formatActivitySummary(metrics: ActivityMetrics, changeType: ChangeType): string {
+    const formattedDuration = this.formatDuration(metrics.activeTime);
+    
+    let activitySummary = `Active coding time: ${formattedDuration}`;
+    
+    if (metrics.keystrokes > 0) {
+      activitySummary += `, ${metrics.keystrokes} keystrokes`;
+    }
+    
+    if (metrics.fileChanges > 0) {
+      activitySummary += `, ${metrics.fileChanges} file change events`;
+    }
+    
+    // Add change type description
+    let changeDescription = "";
+    switch (changeType) {
+      case 'feature':
+        changeDescription = "✨ Feature development";
+        break;
+      case 'bugfix':
+        changeDescription = "🐛 Bug fixing";
+        break;
+      case 'refactor':
+        changeDescription = "♻️ Code refactoring";
+        break;
+      case 'docs':
+        changeDescription = "📝 Documentation";
+        break;
+      case 'style':
+        changeDescription = "💄 Styling/formatting";
+        break;
+      default:
+        changeDescription = "👨‍💻 Coding session";
+    }
+    
+    return `${changeDescription} (${activitySummary})`;
+  }
+
+  async generateSummary(
+    changedFiles: Change[],
+    activityMetrics?: ActivityMetrics
+  ): Promise<string> {
     try {
       const timestamp = new Date().toISOString();
-      let summary = `DevTrack Update - ${timestamp}\n\n`;
+      const localTime = new Date().toLocaleString();
+      let summary = `DevTrack Update - ${localTime}\n\n`;
+      
+      // Analyze the type of changes
+      const changeAnalysis = await this.changeAnalyzer.analyzeChanges(changedFiles);
+      
+      // Add activity metrics if available
+      if (activityMetrics) {
+        summary += this.formatActivitySummary(activityMetrics, changeAnalysis.type) + '\n\n';
+      }
+
+      // Get project context
+      const projectContext = this.projectContext.getContextForSummary(changedFiles);
+      if (projectContext) {
+        summary += projectContext + '\n';
+      }
 
       // Get detailed file changes and snippets
       const changePromises = changedFiles.map(async (change) => {
@@ -154,6 +234,8 @@ export class SummaryGenerator {
           details,
           snippet,
           type: change.type,
+          lineCount: change.lineCount || 0,
+          charCount: change.charCount || 0
         };
       });
 
@@ -163,7 +245,8 @@ export class SummaryGenerator {
       summary += 'Changes:\n';
       changes.forEach((change) => {
         if (change.details) {
-          summary += `- ${change.type}: ${change.details}\n`;
+          const metrics = change.lineCount ? ` (${change.lineCount} lines)` : '';
+          summary += `- ${change.type}: ${change.details}${metrics}\n`;
         }
       });
 
@@ -175,10 +258,18 @@ export class SummaryGenerator {
         }
       });
 
+      // Add analysis details if confidence is high enough
+      if (changeAnalysis.confidence > 0.6 && changeAnalysis.details.length > 0) {
+        summary += '\nAnalysis:\n';
+        changeAnalysis.details.forEach(detail => {
+          summary += `- ${detail}\n`;
+        });
+      }
+
       // Save commit info
       await this.projectContext.addCommit(summary, changedFiles);
       this.outputChannel.appendLine(
-        `DevTrack: Generated commit summary with code snippets`
+        `DevTrack: Generated commit summary with code snippets and activity metrics`
       );
 
       return summary;
