@@ -694,48 +694,75 @@ node_modules/
   // Helper method to ensure repository and remote are properly set up
   public async ensureRepoSetup(remoteUrl: string): Promise<void> {
     try {
-      // Initialize Git first
+      // Initialize Git first - this should set up our dedicated tracking directory
       await this.ensureGitInitialized();
-
+      
+      // After ensureGitInitialized, this.git should be pointing to our tracking dir
+      // Now we check if it's already a repo
       const isRepo = await this.git.checkIsRepo();
       if (!isRepo) {
-        await this.initializeRepo(remoteUrl);
-        return;
-      }
-
-      // Check remote
-      const remotes = await this.git.getRemotes();
-      const hasOrigin = remotes.some((remote) => remote.name === 'origin');
-
-      if (!hasOrigin) {
+        // If not a repo, initialize it
+        await this.git.init();
+        this.outputChannel.appendLine('DevTrack: Initialized new Git repository in tracking directory');
+        
+        // Set up Git config
+        await this.git.addConfig('user.name', 'DevTrack', false, 'local');
+        await this.git.addConfig('user.email', 'devtrack@example.com', false, 'local');
+        
+        // Create and checkout main branch
+        await this.git.raw(['branch', '-M', 'main']);
+        
+        // Add remote
         await this.git.addRemote('origin', remoteUrl);
-        this.outputChannel.appendLine(
-          `DevTrack: Added remote origin ${remoteUrl}`
-        );
+        this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}`);
+        
+        // Create initial commit if needed
+        const gitkeepPath = path.join(this.currentTrackingDir, '.gitkeep');
+        await fs.promises.writeFile(gitkeepPath, '');
+        await this.git.add('.gitkeep');
+        await this.git.commit('DevTrack: Initialize tracking repository');
+        
+        // Push to remote
+        try {
+          await this.git.push(['--set-upstream', 'origin', 'main']);
+        } catch (pushError: any) {
+          // Handle first push error (likely because remote repo is empty)
+          if (pushError.message.includes('no upstream branch')) {
+            await this.git.push(['-u', 'origin', 'main', '--force']);
+          } else {
+            throw pushError;
+          }
+        }
       } else {
-        // Update existing remote URL
-        await this.git.remote(['set-url', 'origin', remoteUrl]);
-        this.outputChannel.appendLine(
-          `DevTrack: Updated remote origin to ${remoteUrl}`
-        );
+        // Repository exists, ensure remote is set up correctly
+        const remotes = await this.git.getRemotes();
+        const hasOrigin = remotes.some((remote) => remote.name === 'origin');
+  
+        if (!hasOrigin) {
+          await this.git.addRemote('origin', remoteUrl);
+          this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}`);
+        } else {
+          // Update existing remote URL
+          await this.git.remote(['set-url', 'origin', remoteUrl]);
+          this.outputChannel.appendLine(`DevTrack: Updated remote origin to ${remoteUrl}`);
+        }
+        
+        // Ensure we're on main branch
+        try {
+          await this.git.checkout('main');
+          await this.git.push(['--set-upstream', 'origin', 'main']);
+        } catch (error: any) {
+          this.outputChannel.appendLine(`DevTrack: Error setting up tracking branch - ${error.message}`);
+          // Continue even if push fails - we'll retry on next operation
+        }
       }
+      
+      // Initialize statistics
       await this.initializeStatistics(false);
-
-      // Ensure we have the correct tracking branch
-      try {
-        const branches = await this.git.branch();
-        await this.git.checkout('main');
-        await this.git.push(['--set-upstream', 'origin', 'main']);
-      } catch (error: any) {
-        this.outputChannel.appendLine(
-          `DevTrack: Error setting up tracking branch - ${error.message}`
-        );
-        // Continue even if push fails - we'll retry on next operation
-      }
+      
+      this.outputChannel.appendLine('DevTrack: Repository setup completed successfully');
     } catch (error: any) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error ensuring repo setup - ${error.message}`
-      );
+      this.outputChannel.appendLine(`DevTrack: Error ensuring repo setup - ${error.message}`);
       throw error;
     }
   }
