@@ -32,7 +32,7 @@ export class Tracker extends EventEmitter {
   private isTracking: boolean = false;
 
   // New activity tracking
-  private activityTimeout: NodeJS.Timeout | null = null;
+  private activityTimeout: ReturnType<typeof setTimeout> | null = null;
   private keystrokeCount: number = 0;
   private activeStartTime: Date | null = null;
   private totalActiveTime: number = 0; // in seconds

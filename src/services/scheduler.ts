@@ -1,6 +1,11 @@
 // services/scheduler.ts
 import * as vscode from 'vscode';
-import { setTimeout, clearInterval, setInterval, clearTimeout} from 'node:timers';
+import {
+  setTimeout,
+  clearInterval,
+  setInterval,
+  clearTimeout,
+} from 'node:timers';
 import { Tracker, ActivityMetrics } from './tracker';
 import { SummaryGenerator } from './summaryGenerator';
 import { GitService } from './gitService';
