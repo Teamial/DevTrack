@@ -259,20 +259,22 @@ export class GitService extends EventEmitter {
       if (!this.git) {
         // Get tracking directory first
         await this.createTrackingDirectory();
-
+  
         const options: Partial<SimpleGitOptions> = {
           baseDir: this.currentTrackingDir,
           binary: this.findGitExecutable(),
           maxConcurrentProcesses: 1,
         };
-
+  
         this.git = simpleGit(options);
+        
+        // Set the repo path to the tracking directory
+        this.repoPath = this.currentTrackingDir;
+        
         this.outputChannel.appendLine('DevTrack: Git initialized successfully');
       }
     } catch (error: any) {
-      this.outputChannel.appendLine(
-        `DevTrack: Failed to initialize Git - ${error.message}`
-      );
+      this.outputChannel.appendLine(`DevTrack: Failed to initialize Git - ${error.message}`);
       throw error;
     }
   }
@@ -303,41 +305,23 @@ export class GitService extends EventEmitter {
         if (!homeDir) {
           throw new Error('Unable to determine home directory for DevTrack');
         }
-
-        // Create a base tracking directory even without workspace
-        this.currentTrackingDir = path.join(
-          homeDir,
-          '.devtrack',
-          'tracking',
-          'default'
-        );
-
-        // If workspace is available, use workspace-specific directory
+  
+        // Get workspace-specific ID for tracking directory
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (workspaceFolders && workspaceFolders.length > 0) {
-          const workspaceId = Buffer.from(workspaceFolders[0].uri.fsPath)
-            .toString('base64')
-            .replace(/[/+=]/g, '_');
-          this.currentTrackingDir = path.join(
-            homeDir,
-            '.devtrack',
-            'tracking',
-            workspaceId
-          );
-        }
-
+        const workspaceId = workspaceFolders && workspaceFolders.length > 0
+          ? Buffer.from(workspaceFolders[0].uri.fsPath).toString('base64').replace(/[/+=]/g, '_')
+          : 'default';
+        
+        this.currentTrackingDir = path.join(homeDir, '.devtrack', 'tracking', workspaceId);
+  
         if (!fs.existsSync(this.currentTrackingDir)) {
           await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
         }
-
-        this.outputChannel.appendLine(
-          `DevTrack: Created tracking directory at ${this.currentTrackingDir}`
-        );
+  
+        this.outputChannel.appendLine(`DevTrack: Created tracking directory at ${this.currentTrackingDir}`);
       }
     } catch (error: any) {
-      this.outputChannel.appendLine(
-        `DevTrack: Error creating tracking directory - ${error.message}`
-      );
+      this.outputChannel.appendLine(`DevTrack: Error creating tracking directory - ${error.message}`);
       throw error;
     }
   }
