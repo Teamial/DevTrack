@@ -150,6 +150,11 @@
           "default": "private",
           "description": "Visibility of the DevTrack GitHub repository. Private by default."
         },
+        "devtrack.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start DevTrack on startup. If not authenticated, DevTrack will prompt you to sign in to GitHub."
+        },
         "devtrack.privacyLevel": {
           "type": "string",
           "enum": ["aggregateOnly", "extensions", "relativePaths"],

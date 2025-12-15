@@ -14141,11 +14141,65 @@ async function activate(context) {
     await registerWebsiteCommands(context, services);
     await registerDashboardCommands(context, services);
     setupConfigurationHandling(services);
-    showWelcomeMessage(context, services);
+    const workspaceWatcher = vscode10.workspace.onDidChangeWorkspaceFolders(() => {
+      updateWorkspaceUI(services);
+      attemptAutoStart(services);
+    });
+    context.subscriptions.push(workspaceWatcher);
+    updateWorkspaceUI(services);
+    attemptAutoStart(services);
+    const config = vscode10.workspace.getConfiguration("devtrack");
+    const autoStart = config.get("autoStart", true);
+    if (!autoStart) {
+      showWelcomeMessage(context, services);
+    }
     channel.appendLine("DevTrack: Extension activated successfully");
   } catch (error) {
     channel.appendLine(`DevTrack: Activation error - ${error}`);
     vscode10.window.showErrorMessage("DevTrack: Failed to activate extension");
+  }
+}
+function hasWorkspaceOpen() {
+  return (vscode10.workspace.workspaceFolders ?? []).length > 0;
+}
+function updateWorkspaceUI(services) {
+  if (!hasWorkspaceOpen()) {
+    try {
+      services.tracker.stopTracking();
+      if (services.scheduler) {
+        services.scheduler.stop();
+        services.scheduler = null;
+      }
+    } catch {
+    }
+    services.trackingStatusBar.text = "$(folder) DevTrack: Open Folder";
+    services.trackingStatusBar.tooltip = "Open a folder to start DevTrack tracking";
+    services.trackingStatusBar.command = "devtrack.openFolder";
+    services.trackingStatusBar.show();
+    services.authStatusBar.hide();
+    services.countdownStatusBar.hide();
+    vscode10.commands.executeCommand("setContext", "devtrack:isInitialized", false);
+    vscode10.commands.executeCommand("setContext", "devtrack:isTracking", false);
+    return;
+  }
+  services.trackingStatusBar.show();
+  services.authStatusBar.show();
+  if (!services.scheduler) {
+    services.countdownStatusBar.hide();
+  }
+}
+async function attemptAutoStart(services) {
+  const config = vscode10.workspace.getConfiguration("devtrack");
+  const autoStart = config.get("autoStart", true);
+  if (!autoStart || !hasWorkspaceOpen()) {
+    return;
+  }
+  if (services.scheduler) {
+    return;
+  }
+  try {
+    await vscode10.commands.executeCommand("devtrack.login");
+  } catch (e) {
   }
 }
 async function initializeServices(context, channel) {
