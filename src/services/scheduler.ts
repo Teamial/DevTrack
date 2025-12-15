@@ -169,7 +169,9 @@ export class Scheduler {
       const distinctFiles = this.tracker.getChangedFiles().length;
       if (
         timeSinceLastCommit >
-          this.commitFrequency * 60 * this.options.adaptiveEarlyCommitAfterFraction &&
+          this.commitFrequency *
+            60 *
+            this.options.adaptiveEarlyCommitAfterFraction &&
         distinctFiles >= this.options.adaptiveMinDistinctFiles &&
         metrics.activeTime > this.options.minActiveTimeForCommit
       ) {
@@ -181,11 +183,11 @@ export class Scheduler {
         ) {
           // Not enough typing yet; skip early commit.
         } else {
-        this.outputChannel.appendLine(
-          'Scheduler: Adaptive commit triggered due to high activity'
-        );
-        this.commitChanges();
-        return;
+          this.outputChannel.appendLine(
+            'Scheduler: Adaptive commit triggered due to high activity'
+          );
+          this.commitChanges();
+          return;
         }
       }
 

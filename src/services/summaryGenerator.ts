@@ -1,12 +1,15 @@
-/* eslint-disable no-unused-vars */
 // src/services/summaryGenerator.ts
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { Change } from './tracker';
 import { ProjectContext } from './projectContext';
 import { ActivityMetrics } from './tracker';
-import { ChangeAnalyzer, ChangeType, ChangeAnalysis } from './changeAnalyzer';
-import { buildTrackingLogEntryV1, PrivacyLevel, TrackingLogEntryV1 } from './trackingLog';
+import { ChangeAnalyzer, ChangeType } from './changeAnalyzer';
+import {
+  buildTrackingLogEntryV1,
+  PrivacyLevel,
+  TrackingLogEntryV1,
+} from './trackingLog';
 
 export class SummaryGenerator {
   private outputChannel: vscode.OutputChannel;
@@ -110,7 +113,9 @@ export class SummaryGenerator {
     }
 
     // Minimal, non-sensitive change list
-    const relPaths = changedFiles.map((c) => vscode.workspace.asRelativePath(c.uri));
+    const relPaths = changedFiles.map((c) =>
+      vscode.workspace.asRelativePath(c.uri)
+    );
     summary += `Changed files: ${relPaths.length}\n`;
     if (privacyLevel === 'relativePaths') {
       // Still no code contents; only paths inside the workspace

@@ -11,15 +11,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: npm
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check-types
 
       - name: Lint
         run: npm run lint
@@ -35,5 +39,14 @@ jobs:
       # - name: Test
       #   run: xvfb-run -a npm test
 
-      - name: Build
-        run: npm run compile
+      - name: Package extension (production)
+        run: npm run package
+
+      - name: Build VSIX
+        run: npx --yes vsce package
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: devtrack-vsix
+          path: devtrack-*.vsix

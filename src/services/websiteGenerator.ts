@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 // src/services/websiteGenerator.ts
 import * as vscode from 'vscode';
 import * as fs from 'fs';
@@ -548,7 +547,7 @@ export async function loadStats(): Promise<CodingStats> {
           `DevTrack: Found dashboard component at ${possiblePath}`
         );
         break;
-      } catch (error) {
+      } catch {
         // Continue trying other paths
       }
     }

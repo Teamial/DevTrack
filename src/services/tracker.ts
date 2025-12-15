@@ -86,7 +86,10 @@ export class Tracker extends EventEmitter {
     try {
       const config = vscode.workspace.getConfiguration('devtrack');
       this.excludePatterns = config.get<string[]>('exclude') || [];
-      this.trackKeystrokesEnabled = config.get<boolean>('trackKeystrokes', true);
+      this.trackKeystrokesEnabled = config.get<boolean>(
+        'trackKeystrokes',
+        true
+      );
       // maxIdleTimeBeforePause is seconds in settings
       const maxIdleSeconds = config.get<number>('maxIdleTimeBeforePause', 900);
       // Clamp to a reasonable range
@@ -270,7 +273,7 @@ export class Tracker extends EventEmitter {
         lineCount: document.lineCount,
         charCount: document.getText().length,
       };
-    } catch (error) {
+    } catch {
       return { lineCount: 0, charCount: 0 };
     }
   }

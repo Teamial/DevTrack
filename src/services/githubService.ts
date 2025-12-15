@@ -26,7 +26,10 @@ export class GitHubService {
    * Returns the authenticated GitHub identity. Useful for attributing commits
    * so they count toward the user's GitHub contributions.
    */
-  async getAuthenticatedIdentity(): Promise<{ login: string; id: number } | null> {
+  async getAuthenticatedIdentity(): Promise<{
+    login: string;
+    id: number;
+  } | null> {
     try {
       const { data } = await this.octokit.users.getAuthenticated();
       return { login: data.login, id: data.id };

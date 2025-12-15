@@ -70,5 +70,3 @@ export function getRelativePathsForChanges(changes: Change[]): string[] {
   // This helper is mainly for tests or when changes already contain relative paths.
   return changes.map((c) => c.uri.fsPath);
 }
-
-

@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -69,10 +68,12 @@ export async function activate(
     await registerDashboardCommands(context, services);
     setupConfigurationHandling(services);
     // Workspace UI mediation (no folder open => show Open Folder; stop countdown)
-    const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      updateWorkspaceUI(services);
-      attemptAutoStart(services);
-    });
+    const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(
+      () => {
+        updateWorkspaceUI(services);
+        attemptAutoStart(services);
+      }
+    );
     context.subscriptions.push(workspaceWatcher);
 
     updateWorkspaceUI(services);
@@ -111,14 +112,19 @@ function updateWorkspaceUI(services: DevTrackServices): void {
 
     // Show affordance to open a folder
     services.trackingStatusBar.text = '$(folder) DevTrack: Open Folder';
-    services.trackingStatusBar.tooltip = 'Open a folder to start DevTrack tracking';
+    services.trackingStatusBar.tooltip =
+      'Open a folder to start DevTrack tracking';
     services.trackingStatusBar.command = 'devtrack.openFolder';
     services.trackingStatusBar.show();
 
     services.authStatusBar.hide();
     services.countdownStatusBar.hide();
 
-    vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', false);
+    vscode.commands.executeCommand(
+      'setContext',
+      'devtrack:isInitialized',
+      false
+    );
     vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
     return;
   }
@@ -147,7 +153,7 @@ async function attemptAutoStart(services: DevTrackServices): Promise<void> {
   // Prompt login/setup (this will be silent if an existing session exists).
   try {
     await vscode.commands.executeCommand('devtrack.login');
-  } catch (e) {
+  } catch {
     // ignore; user may cancel auth prompt
   }
 }
@@ -223,13 +229,21 @@ async function initializeServices(
     // Countdown bar shows only when tracking is active
 
     // Initialize command palette contexts
-    vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', false);
+    vscode.commands.executeCommand(
+      'setContext',
+      'devtrack:isInitialized',
+      false
+    );
     vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
 
     // Try to restore authentication state
     const restored = await restoreAuthenticationState(context, services);
     if (restored) {
-      vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
+      vscode.commands.executeCommand(
+        'setContext',
+        'devtrack:isInitialized',
+        true
+      );
       vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
     }
 
@@ -501,7 +515,8 @@ async function restoreAuthenticationState(
     if (session) {
       services.githubService.setToken(session.accessToken);
       const identity = await services.githubService.getAuthenticatedIdentity();
-      const username = identity?.login ?? (await services.githubService.getUsername());
+      const username =
+        identity?.login ?? (await services.githubService.getUsername());
 
       if (username === persistedState.username) {
         const repoName = persistedState.repoName || 'code-tracking';
@@ -516,8 +531,16 @@ async function restoreAuthenticationState(
 
         updateStatusBar(services, 'auth', true);
         updateStatusBar(services, 'tracking', true);
-        vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
-        vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
+        vscode.commands.executeCommand(
+          'setContext',
+          'devtrack:isInitialized',
+          true
+        );
+        vscode.commands.executeCommand(
+          'setContext',
+          'devtrack:isTracking',
+          true
+        );
 
         services.outputChannel.appendLine(
           'DevTrack: Successfully restored authentication state'
@@ -651,7 +674,11 @@ async function handleStartTracking(services: DevTrackServices): Promise<void> {
       updateStatusBar(services, 'tracking', true);
       vscode.window.showInformationMessage('DevTrack: Tracking started.');
       vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
-      vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
+      vscode.commands.executeCommand(
+        'setContext',
+        'devtrack:isInitialized',
+        true
+      );
     } else {
       const response = await vscode.window.showInformationMessage(
         'DevTrack needs to be set up before starting. Would you like to set it up now?',
@@ -921,7 +948,8 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
     // Initialize GitHub service
     services.githubService.setToken(session.accessToken);
     const identity = await services.githubService.getAuthenticatedIdentity();
-    const username = identity?.login ?? (await services.githubService.getUsername());
+    const username =
+      identity?.login ?? (await services.githubService.getUsername());
 
     if (!username) {
       throw new Error('Unable to retrieve GitHub username.');
@@ -930,8 +958,7 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
     // Setup repository
     const config = vscode.workspace.getConfiguration('devtrack');
     const repoName = config.get<string>('repoName') || 'code-tracking';
-    const repoVisibility =
-      config.get<string>('repoVisibility') || 'private';
+    const repoVisibility = config.get<string>('repoVisibility') || 'private';
     const isPrivateRepo = repoVisibility !== 'public';
     const remoteUrl = `https://github.com/${username}/${repoName}.git`;
 
@@ -961,7 +988,11 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
     // Update UI and persist state
     updateStatusBar(services, 'auth', true);
     updateStatusBar(services, 'tracking', true);
-    vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
+    vscode.commands.executeCommand(
+      'setContext',
+      'devtrack:isInitialized',
+      true
+    );
     vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
 
     await services.extensionContext.globalState.update('devtrackAuthState', {
@@ -1059,7 +1090,8 @@ async function handleConfigurationChange(
     const newExcludePatterns = config.get<string[]>('exclude') || [];
     services.tracker.updateExcludePatterns(newExcludePatterns);
     services.tracker.updateTrackingSettings({
-      maxIdleTimeBeforePauseSeconds: config.get<number>('maxIdleTimeBeforePause') || 900,
+      maxIdleTimeBeforePauseSeconds:
+        config.get<number>('maxIdleTimeBeforePause') || 900,
       trackKeystrokes: config.get<boolean>('trackKeystrokes', true),
     });
     services.outputChannel.appendLine('DevTrack: Updated exclude patterns');
@@ -1150,7 +1182,7 @@ function showWelcomeMessage(
   }
 }
 
-function showWelcomeInfo(outputChannel: vscode.OutputChannel): void {
+function showWelcomeInfo(_outputChannel: vscode.OutputChannel): void {
   const welcomeMessage = `
 DevTrack helps you monitor your coding activity by:
 - Tracking actual time spent coding (not just when you make commits)

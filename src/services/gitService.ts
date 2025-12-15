@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import { Buffer } from 'buffer';
 import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';
@@ -11,7 +10,6 @@ import { execSync } from 'child_process';
 import process from 'process';
 const execAsync = promisify(exec);
 import * as fs from 'fs';
-import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 import { TrackingLogEntryV1 } from './trackingLog';
 
@@ -496,7 +494,7 @@ export class GitService extends EventEmitter {
         metadataPath,
         JSON.stringify(metadata, null, 2)
       );
-    } catch (error) {
+    } catch {
       this.outputChannel.appendLine(
         'DevTrack: Failed to update tracking metadata'
       );
@@ -763,32 +761,41 @@ node_modules/
     try {
       // Initialize Git first - this should set up our dedicated tracking directory
       await this.ensureGitInitialized();
-      
+
       // After ensureGitInitialized, this.git should be pointing to our tracking dir
       // Now we check if it's already a repo
       const isRepo = await this.git.checkIsRepo();
       if (!isRepo) {
         // If not a repo, initialize it
         await this.git.init();
-        this.outputChannel.appendLine('DevTrack: Initialized new Git repository in tracking directory');
-        
+        this.outputChannel.appendLine(
+          'DevTrack: Initialized new Git repository in tracking directory'
+        );
+
         // Set up Git config
         await this.git.addConfig('user.name', 'DevTrack', false, 'local');
-        await this.git.addConfig('user.email', 'devtrack@example.com', false, 'local');
-        
+        await this.git.addConfig(
+          'user.email',
+          'devtrack@example.com',
+          false,
+          'local'
+        );
+
         // Create and checkout main branch
         await this.git.raw(['branch', '-M', 'main']);
-        
+
         // Add remote
         await this.git.addRemote('origin', remoteUrl);
-        this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}`);
-        
+        this.outputChannel.appendLine(
+          `DevTrack: Added remote origin ${remoteUrl}`
+        );
+
         // Create initial commit if needed
         const gitkeepPath = path.join(this.currentTrackingDir, '.gitkeep');
         await fs.promises.writeFile(gitkeepPath, '');
         await this.git.add('.gitkeep');
         await this.git.commit('DevTrack: Initialize tracking repository');
-        
+
         // Push to remote
         try {
           await this.git.push(['--set-upstream', 'origin', 'main']);
@@ -804,70 +811,95 @@ node_modules/
         // Repository exists, ensure remote is set up correctly
         const remotes = await this.git.getRemotes();
         const hasOrigin = remotes.some((remote) => remote.name === 'origin');
-  
+
         if (!hasOrigin) {
           await this.git.addRemote('origin', remoteUrl);
-          this.outputChannel.appendLine(`DevTrack: Added remote origin ${remoteUrl}`);
+          this.outputChannel.appendLine(
+            `DevTrack: Added remote origin ${remoteUrl}`
+          );
         } else {
           // Update existing remote URL
           await this.git.remote(['set-url', 'origin', remoteUrl]);
-          this.outputChannel.appendLine(`DevTrack: Updated remote origin to ${remoteUrl}`);
+          this.outputChannel.appendLine(
+            `DevTrack: Updated remote origin to ${remoteUrl}`
+          );
         }
-        
+
         // Ensure we're on main branch
         try {
           await this.git.checkout('main');
           await this.git.push(['--set-upstream', 'origin', 'main']);
         } catch (error: any) {
-          this.outputChannel.appendLine(`DevTrack: Error setting up tracking branch - ${error.message}`);
+          this.outputChannel.appendLine(
+            `DevTrack: Error setting up tracking branch - ${error.message}`
+          );
           // Continue even if push fails - we'll retry on next operation
         }
       }
-      
+
       // Initialize statistics
       await this.initializeStatistics(false);
 
       // Make sure tracking repo is in sync with remote before finishing setup
-try {
-  await this.git.fetch('origin', 'main');
-  
-  // Check if we have remote history
-  const remoteExists = await this.git.raw(['ls-remote', '--exit-code', 'origin', 'main']);
-  if (remoteExists) {
-    this.outputChannel.appendLine('DevTrack: Remote repository exists, syncing...');
-    
-    try {
-      // Try to merge remote content
-      await this.git.merge(['origin/main', '--allow-unrelated-histories', '--no-edit']);
-      this.outputChannel.appendLine('DevTrack: Merged remote history');
-    } catch (mergeError: any) {
-      this.outputChannel.appendLine(`DevTrack: Couldn't automatically merge - ${mergeError.message}`);
-      
-      // If merge fails, we need a more aggressive approach - get remote and recommit our changes
       try {
-        // Get list of our files before resetting
-        const status = await this.git.status();
-        const ourFiles = status.files.map(f => f.path);
-        
-        // Pull with reset
-        await this.git.reset(['--hard', 'origin/main']);
-        this.outputChannel.appendLine('DevTrack: Reset to match remote state');
-        
-        // We'll re-add our files in the first commit
-      } catch (resetError: any) {
-        this.outputChannel.appendLine(`DevTrack: Reset failed - ${resetError.message}`);
-        // Continue anyway
+        await this.git.fetch('origin', 'main');
+
+        // Check if we have remote history
+        const remoteExists = await this.git.raw([
+          'ls-remote',
+          '--exit-code',
+          'origin',
+          'main',
+        ]);
+        if (remoteExists) {
+          this.outputChannel.appendLine(
+            'DevTrack: Remote repository exists, syncing...'
+          );
+
+          try {
+            // Try to merge remote content
+            await this.git.merge([
+              'origin/main',
+              '--allow-unrelated-histories',
+              '--no-edit',
+            ]);
+            this.outputChannel.appendLine('DevTrack: Merged remote history');
+          } catch (mergeError: any) {
+            this.outputChannel.appendLine(
+              `DevTrack: Couldn't automatically merge - ${mergeError.message}`
+            );
+
+            // If merge fails, we need a more aggressive approach - get remote and recommit our changes
+            try {
+              // Pull with reset
+              await this.git.reset(['--hard', 'origin/main']);
+              this.outputChannel.appendLine(
+                'DevTrack: Reset to match remote state'
+              );
+
+              // We'll re-add our files in the first commit
+            } catch (resetError: any) {
+              this.outputChannel.appendLine(
+                `DevTrack: Reset failed - ${resetError.message}`
+              );
+              // Continue anyway
+            }
+          }
+        }
+      } catch (syncError: any) {
+        this.outputChannel.appendLine(
+          `DevTrack: Repository sync skipped - ${syncError.message}`
+        );
+        // This is normal for first-time setup, so just continue
       }
-    }
-  }
-} catch (syncError: any) {
-  this.outputChannel.appendLine(`DevTrack: Repository sync skipped - ${syncError.message}`);
-  // This is normal for first-time setup, so just continue
-}
-      
-      this.outputChannel.appendLine('DevTrack: Repository setup completed successfully');
+
+      this.outputChannel.appendLine(
+        'DevTrack: Repository setup completed successfully'
+      );
     } catch (error: any) {
-      this.outputChannel.appendLine(`DevTrack: Error ensuring repo setup - ${error.message}`);
+      this.outputChannel.appendLine(
+        `DevTrack: Error ensuring repo setup - ${error.message}`
+      );
       throw error;
     }
   }
@@ -981,7 +1013,6 @@ try {
   private async getUpdatedStats(): Promise<DevTrackStats> {
     // Get updated statistics based on recent commits
     const log = await this.git.log();
-    const now = new Date();
 
     const stats: DevTrackStats = {
       totalTime: 0,
@@ -1118,11 +1149,15 @@ try {
           const safeIso = new Date().toISOString().replace(/[:.]/g, '-');
           const filename = `${safeIso}-${randomUUID()}.json`;
           logFileRelPath = path.join('changes', filename);
-          const logFileAbsPath = path.join(this.currentTrackingDir, logFileRelPath);
+          const logFileAbsPath = path.join(
+            this.currentTrackingDir,
+            logFileRelPath
+          );
 
           const entryToWrite: TrackingLogEntryV1 = {
             ...logEntry,
-            workspaceId: logEntry.workspaceId ?? path.basename(this.currentTrackingDir),
+            workspaceId:
+              logEntry.workspaceId ?? path.basename(this.currentTrackingDir),
           };
 
           await fs.promises.writeFile(
@@ -1311,7 +1346,7 @@ try {
             );
             return gitPathFromWhere;
           }
-        } catch (error) {
+        } catch {
           this.outputChannel.appendLine('DevTrack: Git not found in PATH');
         }
 
@@ -1332,7 +1367,7 @@ try {
                 );
                 return gitPath;
               }
-            } catch (e) {
+            } catch {
               // Continue to next method
             }
           }

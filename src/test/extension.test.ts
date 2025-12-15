@@ -1,8 +1,5 @@
-/* eslint-disable no-undef */
-/* eslint-disable no-unused-vars */
 import { strictEqual } from 'assert';
-import { ExtensionContext, window } from 'vscode';
-import * as extension from '../extension';
+import { window } from 'vscode';
 
 suite('Extension Test Suite', () => {
   window.showInformationMessage('Start all tests.');

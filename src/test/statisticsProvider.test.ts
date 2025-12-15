@@ -26,7 +26,11 @@ suite('StatisticsProvider', () => {
     );
     await fs.promises.writeFile(
       path.join(changesDir, 'b.json'),
-      JSON.stringify({ ...base, timestamp: '2025-12-15T11:00:00.000Z', files: { totalChangedFiles: 1, extensions: { '.md': 1 } } }),
+      JSON.stringify({
+        ...base,
+        timestamp: '2025-12-15T11:00:00.000Z',
+        files: { totalChangedFiles: 1, extensions: { '.md': 1 } },
+      }),
       'utf8'
     );
 
@@ -44,5 +48,3 @@ suite('StatisticsProvider', () => {
     strictEqual(types.includes('MD'), true);
   });
 });
-
-

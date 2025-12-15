@@ -42,5 +42,3 @@ suite('TrackingLog', () => {
     strictEqual(entry.files.relativePaths, undefined);
   });
 });
-
-

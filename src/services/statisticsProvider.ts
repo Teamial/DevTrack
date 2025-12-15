@@ -46,7 +46,7 @@ export class StatisticsProvider {
       let files: string[] = [];
       try {
         files = await fs.promises.readdir(changesDir);
-      } catch (e) {
+      } catch {
         // No changes yet
         return {
           totalTime: 0,
@@ -97,7 +97,7 @@ export class StatisticsProvider {
         const content = await fs.promises.readFile(filePath, 'utf8');
         const changeData = JSON.parse(content);
         this.processChangeData(changeData, stats);
-      } catch (e) {
+      } catch {
         // Skip invalid files
         continue;
       }
@@ -116,7 +116,6 @@ export class StatisticsProvider {
     const hour = date.getHours();
     const totalChangedFiles =
       changeData?.files?.totalChangedFiles ?? changeData?.files?.length ?? 0;
-    const activeTimeSeconds = changeData?.activity?.activeTimeSeconds ?? 0;
 
     // Update timeline data
     if (!stats.activityTimeline.has(dateKey)) {
@@ -142,7 +141,10 @@ export class StatisticsProvider {
     if (extensions && typeof extensions === 'object') {
       for (const [ext, count] of Object.entries(extensions)) {
         const key = (ext || 'unknown').toLowerCase();
-        stats.fileTypes.set(key, (stats.fileTypes.get(key) || 0) + Number(count || 0));
+        stats.fileTypes.set(
+          key,
+          (stats.fileTypes.get(key) || 0) + Number(count || 0)
+        );
       }
     }
 

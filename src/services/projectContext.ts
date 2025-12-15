@@ -132,19 +132,8 @@ export class ProjectContext {
     );
   }
 
-  public async addCommit(summary: string, changes: Change[]) {
+  public async addCommit(_summary: string, _changes: Change[]) {
     try {
-      const trackedFiles = changes
-        .map((change) => vscode.workspace.asRelativePath(change.uri))
-        .filter((filePath) => this.shouldTrackFile(filePath));
-
-      // eslint-disable-next-line no-unused-vars
-      const commit: CommitHistory = {
-        timestamp: Date.now(),
-        summary: summary,
-        files: trackedFiles,
-      };
-
       await this.loadGitHistory(); // Refresh Git history
       await this.updateProjectStats();
     } catch (error) {

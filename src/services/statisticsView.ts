@@ -2,7 +2,6 @@
 import * as vscode from 'vscode';
 import { setInterval, clearInterval } from 'node:timers';
 import { StatisticsProvider } from './statisticsProvider';
-import * as fs from 'fs';
 import * as path from 'path';
 
 export class StatisticsView {
@@ -150,12 +149,12 @@ export class StatisticsView {
         const ft = (stats.fileTypes ?? []).slice(0, 12);
         document.getElementById('fileTypesBody').innerHTML = ft.map(r => 
           '<tr><td>' + (r.name ?? 'Unknown') + '</td><td>' + fmt(r.count ?? 0) + '</td><td>' + fmt(r.percentage ?? 0) + '%</td></tr>'
-        ).join('') || '<tr><td colspan=\"3\" class=\"muted\">No data yet</td></tr>';
+        ).join('') || '<tr><td colspan="3" class="muted">No data yet</td></tr>';
 
         const tl = (stats.activityTimeline ?? []).slice(-14);
         document.getElementById('timelineBody').innerHTML = tl.map(r =>
           '<tr><td>' + (r.date ?? '') + '</td><td>' + fmt(r.commits ?? 0) + '</td><td>' + fmt(r.filesChanged ?? 0) + '</td><td>' + fmt(r.linesChanged ?? 0) + '</td></tr>'
-        ).join('') || '<tr><td colspan=\"4\" class=\"muted\">No data yet</td></tr>';
+        ).join('') || '<tr><td colspan="4" class="muted">No data yet</td></tr>';
       }
       window.addEventListener('message', (event) => {
         const msg = event.data;
