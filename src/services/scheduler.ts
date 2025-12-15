@@ -17,6 +17,9 @@ interface SchedulerOptions {
   minActiveTimeForCommit: number; // in seconds
   maxIdleTimeBeforePause: number; // in seconds
   enableAdaptiveScheduling: boolean;
+  adaptiveEarlyCommitAfterFraction: number; // 0-1
+  adaptiveMinDistinctFiles: number;
+  adaptiveMinKeystrokes: number;
 }
 
 export class Scheduler {
@@ -26,8 +29,8 @@ export class Scheduler {
   private lastCommitTime: Date = new Date();
   private statusBarItem: vscode.StatusBarItem;
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
-  private isAdaptiveMode: boolean = false;
   private inactivityPauseTimer: ReturnType<typeof setTimeout> | null = null;
+  private isPausedForInactivity: boolean = false;
   private options: SchedulerOptions;
   private isRunning: boolean = false;
 
@@ -46,6 +49,9 @@ export class Scheduler {
       minActiveTimeForCommit: 60, // 1 minute of active time
       maxIdleTimeBeforePause: 15 * 60, // 15 minutes
       enableAdaptiveScheduling: true,
+      adaptiveEarlyCommitAfterFraction: 0.5,
+      adaptiveMinDistinctFiles: 3,
+      adaptiveMinKeystrokes: 120,
     };
 
     // Use provided countdown status bar item to avoid duplicates; otherwise create one.
@@ -67,6 +73,7 @@ export class Scheduler {
     }
 
     this.isRunning = true;
+    this.isPausedForInactivity = false;
     this.lastCommitTime = new Date();
     this.resetTimer();
     this.startCountdown();
@@ -82,6 +89,7 @@ export class Scheduler {
     }
 
     this.isRunning = false;
+    this.isPausedForInactivity = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -126,6 +134,10 @@ export class Scheduler {
     if (!this.isRunning) {
       return;
     }
+    if (this.isPausedForInactivity) {
+      this.statusBarItem.text = `$(debug-pause) Paused`;
+      return;
+    }
 
     const now = new Date();
     const elapsedMs = now.getTime() - this.lastCommitTime.getTime();
@@ -152,18 +164,29 @@ export class Scheduler {
       const timeSinceLastCommit =
         (now.getTime() - this.lastCommitTime.getTime()) / 1000;
 
-      // If we've been active for at least half the commit frequency
-      // and have significant changes, commit early
+      // If we've been active for a fraction of the commit frequency
+      // and have meaningful activity, commit early.
+      const distinctFiles = this.tracker.getChangedFiles().length;
       if (
-        timeSinceLastCommit > (this.commitFrequency * 60) / 2 &&
-        metrics.fileChanges >= 5 &&
+        timeSinceLastCommit >
+          this.commitFrequency * 60 * this.options.adaptiveEarlyCommitAfterFraction &&
+        distinctFiles >= this.options.adaptiveMinDistinctFiles &&
         metrics.activeTime > this.options.minActiveTimeForCommit
       ) {
+        // If keystrokes are tracked, require some minimal keystrokes to avoid
+        // formatters/file-watcher noise. If keystrokes are 0, we allow distinct-files gating.
+        if (
+          metrics.keystrokes > 0 &&
+          metrics.keystrokes < this.options.adaptiveMinKeystrokes
+        ) {
+          // Not enough typing yet; skip early commit.
+        } else {
         this.outputChannel.appendLine(
           'Scheduler: Adaptive commit triggered due to high activity'
         );
         this.commitChanges();
         return;
+        }
       }
 
       // Setup inactivity pause timer if we detect no activity for a while
@@ -178,21 +201,29 @@ export class Scheduler {
             this.outputChannel.appendLine(
               'Scheduler: Pausing due to inactivity'
             );
-            // Don't actually stop, just pause the timer
+            // Don't actually stop, just pause the timer and countdown UI
+            this.isPausedForInactivity = true;
             if (this.timer) {
               clearTimeout(this.timer);
               this.timer = null;
             }
+            if (this.countdownTimer) {
+              clearInterval(this.countdownTimer);
+              this.countdownTimer = null;
+            }
+            this.updateCountdown();
           }
         }, 60000); // Wait a minute before actually pausing
       } else if (timeSinceLastActivity < 60 && this.inactivityPauseTimer) {
         // Activity detected, clear inactivity timer
         clearTimeout(this.inactivityPauseTimer);
         this.inactivityPauseTimer = null;
+        this.isPausedForInactivity = false;
 
         // Resume timer if it was paused
         if (this.isRunning && !this.timer) {
           this.resetTimer();
+          this.startCountdown();
           this.outputChannel.appendLine(
             'Scheduler: Resuming from inactivity pause'
           );

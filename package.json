@@ -192,6 +192,27 @@
           "default": true,
           "description": "Automatically adjust commit schedule based on coding activity."
         },
+        "devtrack.adaptiveEarlyCommitAfterFraction": {
+          "type": "number",
+          "default": 0.5,
+          "minimum": 0.1,
+          "maximum": 0.9,
+          "description": "When adaptive scheduling is enabled, allow early commits after this fraction of the commit interval has elapsed."
+        },
+        "devtrack.adaptiveMinDistinctFiles": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Minimum number of distinct changed files required to trigger an adaptive early commit."
+        },
+        "devtrack.adaptiveMinKeystrokes": {
+          "type": "number",
+          "default": 120,
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Minimum keystrokes required to trigger an adaptive early commit (helps avoid noise from auto-formatters). If keystrokes are not tracked, distinct-file threshold is used."
+        },
         "devtrack.minChangesForCommit": {
           "type": "number",
           "default": 1,

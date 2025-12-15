@@ -43,8 +43,12 @@ export class Tracker extends EventEmitter {
     lastActiveTimestamp: new Date(),
   };
 
-  // Track idle time (default 5 minutes)
-  private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+  // Track idle time (default 15 minutes; configurable via devtrack.maxIdleTimeBeforePause)
+  private idleTimeoutMs: number = 15 * 60 * 1000;
+  private trackKeystrokesEnabled: boolean = true;
+  // Emit metrics while active (throttled) so adaptive scheduling can react
+  private lastMetricsEmitTs: number = 0;
+  private readonly METRICS_EMIT_THROTTLE_MS = 30 * 1000; // 30 seconds
   // Suppress frequent logging
   private lastLogTimestamp: number = 0;
   private readonly LOG_THROTTLE_MS = 5000; // 5 seconds
@@ -82,6 +86,12 @@ export class Tracker extends EventEmitter {
     try {
       const config = vscode.workspace.getConfiguration('devtrack');
       this.excludePatterns = config.get<string[]>('exclude') || [];
+      this.trackKeystrokesEnabled = config.get<boolean>('trackKeystrokes', true);
+      // maxIdleTimeBeforePause is seconds in settings
+      const maxIdleSeconds = config.get<number>('maxIdleTimeBeforePause', 900);
+      // Clamp to a reasonable range
+      const clamped = Math.max(60, Math.min(24 * 60 * 60, maxIdleSeconds));
+      this.idleTimeoutMs = clamped * 1000;
 
       // Log current workspace state
       const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -147,10 +157,12 @@ export class Tracker extends EventEmitter {
     // Track text document changes
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length > 0) {
-        this.keystrokeCount += event.contentChanges.reduce(
-          (total, change) => total + (change.text?.length || 0),
-          0
-        );
+        if (this.trackKeystrokesEnabled) {
+          this.keystrokeCount += event.contentChanges.reduce(
+            (total, change) => total + (change.text?.length || 0),
+            0
+          );
+        }
         this.recordActivity();
       }
     });
@@ -199,7 +211,7 @@ export class Tracker extends EventEmitter {
     // Set a new timeout to detect inactivity
     this.activityTimeout = setTimeout(() => {
       this.pauseActivityTracking();
-    }, this.IDLE_TIMEOUT_MS);
+    }, this.idleTimeoutMs);
   }
 
   private pauseActivityTracking() {
@@ -235,6 +247,18 @@ export class Tracker extends EventEmitter {
 
     this.activityMetrics.lastActiveTimestamp = new Date();
     this.startActivityTracking(); // Restart the idle timer
+
+    // Emit metrics periodically while active (throttled) so adaptive scheduling can trigger
+    this.emitMetricsThrottled();
+  }
+
+  private emitMetricsThrottled() {
+    const now = Date.now();
+    if (now - this.lastMetricsEmitTs < this.METRICS_EMIT_THROTTLE_MS) {
+      return;
+    }
+    this.lastMetricsEmitTs = now;
+    this.emit('activityMetrics', this.getActivityMetrics());
   }
 
   private async analyzeFileContent(
@@ -361,6 +385,22 @@ export class Tracker extends EventEmitter {
   updateExcludePatterns(newPatterns: string[]) {
     this.excludePatterns = newPatterns;
     this.log(`Updated exclude patterns to: ${newPatterns.join(', ')}`);
+  }
+
+  updateTrackingSettings(options: {
+    maxIdleTimeBeforePauseSeconds?: number;
+    trackKeystrokes?: boolean;
+  }) {
+    if (typeof options.trackKeystrokes === 'boolean') {
+      this.trackKeystrokesEnabled = options.trackKeystrokes;
+    }
+    if (typeof options.maxIdleTimeBeforePauseSeconds === 'number') {
+      const clamped = Math.max(
+        60,
+        Math.min(24 * 60 * 60, options.maxIdleTimeBeforePauseSeconds)
+      );
+      this.idleTimeoutMs = clamped * 1000;
+    }
   }
 
   async reinitialize() {

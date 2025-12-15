@@ -1035,17 +1035,33 @@ async function handleConfigurationChange(
         config.get<number>('minActiveTimeForCommit') || 60;
       const enableAdaptiveScheduling =
         config.get<boolean>('enableAdaptiveScheduling') ?? true;
+      const maxIdleTimeBeforePause =
+        config.get<number>('maxIdleTimeBeforePause') || 900;
+      const adaptiveEarlyCommitAfterFraction =
+        config.get<number>('adaptiveEarlyCommitAfterFraction') ?? 0.5;
+      const adaptiveMinDistinctFiles =
+        config.get<number>('adaptiveMinDistinctFiles') ?? 3;
+      const adaptiveMinKeystrokes =
+        config.get<number>('adaptiveMinKeystrokes') ?? 120;
 
       services.scheduler.updateOptions({
         minChangesForCommit,
         minActiveTimeForCommit,
         enableAdaptiveScheduling,
+        maxIdleTimeBeforePause,
+        adaptiveEarlyCommitAfterFraction,
+        adaptiveMinDistinctFiles,
+        adaptiveMinKeystrokes,
       });
     }
 
     // Update exclude patterns
     const newExcludePatterns = config.get<string[]>('exclude') || [];
     services.tracker.updateExcludePatterns(newExcludePatterns);
+    services.tracker.updateTrackingSettings({
+      maxIdleTimeBeforePauseSeconds: config.get<number>('maxIdleTimeBeforePause') || 900,
+      trackKeystrokes: config.get<boolean>('trackKeystrokes', true),
+    });
     services.outputChannel.appendLine('DevTrack: Updated exclude patterns');
   } catch (error: any) {
     handleError(services, 'Configuration update failed', error);
