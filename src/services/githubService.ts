@@ -23,20 +23,41 @@ export class GitHubService {
   }
 
   /**
+   * Returns the authenticated GitHub identity. Useful for attributing commits
+   * so they count toward the user's GitHub contributions.
+   */
+  async getAuthenticatedIdentity(): Promise<{ login: string; id: number } | null> {
+    try {
+      const { data } = await this.octokit.users.getAuthenticated();
+      return { login: data.login, id: data.id };
+    } catch (error: any) {
+      this.outputChannel.appendLine(
+        `Error fetching authenticated identity: ${error.message}`
+      );
+      vscode.window.showErrorMessage(
+        'DevTrack: Unable to fetch GitHub identity.'
+      );
+      return null;
+    }
+  }
+
+  /**
    * Creates a new repository for the authenticated user.
    * @param repoName - The name of the repository to create.
    * @param description - (Optional) Description of the repository.
+   * @param isPrivate - (Optional) Whether the repository is private. Defaults to true.
    * @returns The clone URL of the created repository or null if creation failed.
    */
   async createRepo(
     repoName: string,
-    description: string = 'DevTrack Repository'
+    description: string = 'DevTrack Repository',
+    isPrivate: boolean = true
   ): Promise<string | null> {
     try {
       const response = await this.octokit.repos.createForAuthenticatedUser({
         name: repoName,
         description,
-        private: false,
+        private: isPrivate,
       });
       return response.data.clone_url;
     } catch (error: any) {

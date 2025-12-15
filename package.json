@@ -144,6 +144,18 @@
           "default": "code-tracking",
           "description": "Name of the GitHub repository to store tracking logs."
         },
+        "devtrack.repoVisibility": {
+          "type": "string",
+          "enum": ["private", "public"],
+          "default": "private",
+          "description": "Visibility of the DevTrack GitHub repository. Private by default."
+        },
+        "devtrack.privacyLevel": {
+          "type": "string",
+          "enum": ["aggregateOnly", "extensions", "relativePaths"],
+          "default": "extensions",
+          "description": "How much file detail DevTrack records in the tracking repo. aggregateOnly: totals only; extensions: counts by extension; relativePaths: includes relative file paths (still no file contents)."
+        },
         "devtrack.commitFrequency": {
           "type": "number",
           "default": 30,

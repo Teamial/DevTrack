@@ -12,6 +12,8 @@ import process from 'process';
 const execAsync = promisify(exec);
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'node:crypto';
+import { TrackingLogEntryV1 } from './trackingLog';
 
 interface TimeDistribution {
   hour: number;
@@ -106,6 +108,40 @@ export class GitService extends EventEmitter {
     if (!fs.existsSync(this.baseTrackingDir)) {
       fs.mkdirSync(this.baseTrackingDir, { recursive: true });
     }
+  }
+
+  private getGitHubNoReplyEmail(login: string, id?: number): string {
+    // Preferred GitHub noreply format that is reliably associated with the user:
+    //   <id>+<login>@users.noreply.github.com
+    // Fallback:
+    //   <login>@users.noreply.github.com
+    if (typeof id === 'number' && Number.isFinite(id)) {
+      return `${id}+${login}@users.noreply.github.com`;
+    }
+    return `${login}@users.noreply.github.com`;
+  }
+
+  /**
+   * Configure commit attribution inside the tracking repository so GitHub
+   * credits commits to the authenticated user.
+   */
+  public async configureCommitAttribution(identity: {
+    login: string;
+    id?: number;
+  }): Promise<void> {
+    if (!identity?.login) {
+      return;
+    }
+
+    await this.ensureGitInitialized();
+
+    const email = this.getGitHubNoReplyEmail(identity.login, identity.id);
+    await this.git.addConfig('user.name', identity.login, false, 'local');
+    await this.git.addConfig('user.email', email, false, 'local');
+
+    this.outputChannel.appendLine(
+      `DevTrack: Configured tracking repo commit identity as ${identity.login} <${email}>`
+    );
   }
   private setupDefaultErrorHandler(): void {
     if (this.listenerCount('error') === 0) {
@@ -1029,7 +1065,10 @@ try {
     }
   }
 
-  public async commitAndPush(message: string): Promise<void> {
+  public async commitAndPush(
+    message: string,
+    logEntry?: TrackingLogEntryV1
+  ): Promise<void> {
     return this.enqueueOperation(async () => {
       try {
         if (!this.git) {
@@ -1042,32 +1081,25 @@ try {
           await fs.promises.mkdir(changesDir, { recursive: true });
         }
 
-        // Extract file content from the commit message
-        const codeBlockRegex = /```\n(.*?):\n([\s\S]*?)```/g;
-        let match;
-        const timestamp = this.formatTimestamp(new Date());
-        const filesToAdd: string[] = [];
+        // Append-only JSON log entry (no code snippets / file contents).
+        let logFileRelPath: string | null = null;
+        if (logEntry) {
+          const safeIso = new Date().toISOString().replace(/[:.]/g, '-');
+          const filename = `${safeIso}-${randomUUID()}.json`;
+          logFileRelPath = path.join('changes', filename);
+          const logFileAbsPath = path.join(this.currentTrackingDir, logFileRelPath);
 
-        while ((match = codeBlockRegex.exec(message)) !== null) {
-          const [_, filename, code] = match;
-          const cleanFilename = filename.trim();
-          const extension = path.extname(cleanFilename);
-          const baseNameWithoutExt = path.basename(cleanFilename, extension);
+          const entryToWrite: TrackingLogEntryV1 = {
+            ...logEntry,
+            workspaceId: logEntry.workspaceId ?? path.basename(this.currentTrackingDir),
+          };
 
-          // Create filename with timestamp: 2025-02-15-1200-00-AM-original_name.ts
-          const timestampedFilename = `${timestamp.sortable}-${baseNameWithoutExt}${extension}`;
-          const filePath = path.join(changesDir, timestampedFilename);
-
-          // Write the actual code file
-          await fs.promises.writeFile(filePath, code.trim());
-          filesToAdd.push(filePath);
+          await fs.promises.writeFile(
+            logFileAbsPath,
+            JSON.stringify(entryToWrite, null, 2),
+            'utf8'
+          );
         }
-
-        // Update the commit message to include local timezone
-        const updatedMessage = message.replace(
-          /DevTrack Update - [0-9T:.-Z]+/,
-          `DevTrack Update - ${timestamp.readable}`
-        );
 
         this.emitSafe('operation:start', 'commitAndPush');
 
@@ -1075,14 +1107,16 @@ try {
           const branches = await this.git.branch();
           const currentBranch = branches.current;
 
-          // Stage only the new code files
-          for (const file of filesToAdd) {
-            await this.git.add(file);
+          // Stage the new log entry (or everything, for non-log operations like website generation)
+          if (logFileRelPath) {
+            await this.git.add(logFileRelPath);
+          } else {
+            await this.git.add('.');
           }
 
-          // Commit with the enhanced message
-          await this.git.commit(updatedMessage);
-          this.emitSafe('commit', updatedMessage);
+          // Commit with a metadata-only message
+          await this.git.commit(message);
+          this.emitSafe('commit', message);
           try {
             // First try to sync with remote
             try {
@@ -1101,11 +1135,6 @@ try {
             if (pushError.message.includes('no upstream branch')) {
               await this.setupRemoteTracking();
               await this.git.push(['origin', currentBranch]);
-            } else if (pushError.message.includes('[rejected]')) {
-              // Force push as last resort if rejected
-              this.outputChannel.appendLine('DevTrack: Push rejected, using force push');
-              await this.git.push(['-f', 'origin', currentBranch]);
-              this.emitSafe('push', currentBranch);
             } else {
               throw pushError;
             }

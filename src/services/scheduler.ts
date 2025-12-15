@@ -243,11 +243,12 @@ export class Scheduler {
       this.isCommitting = true;
       this.statusBarItem.text = `$(sync~spin) Committing...`;
 
-      // Add activity metrics to the summary
-      const enrichedSummary = await this.summaryGenerator.generateSummary(
-        changedFiles,
-        activityMetrics
-      );
+      // Build metadata-only summary + append-only JSON log entry
+      const { summary: enrichedSummary, logEntry } =
+        await this.summaryGenerator.generateSummaryAndLogEntry(
+          changedFiles,
+          activityMetrics
+        );
 
       const config = vscode.workspace.getConfiguration('devtrack');
       if (config.get<boolean>('confirmBeforeCommit', true)) {
@@ -272,7 +273,8 @@ export class Scheduler {
         }
       }
 
-      await this.gitService.commitAndPush(enrichedSummary);
+      // Commit JSON log entry (and any other staged tracking artifacts)
+      await this.gitService.commitAndPush(enrichedSummary, logEntry);
       this.tracker.clearChanges();
       this.tracker.resetMetrics();
       this.lastCommitTime = new Date();
@@ -326,19 +328,11 @@ export class Scheduler {
   }
 
   private createCondensedCommitMessage(fullMessage: string): string {
-    // Extract just the first part of the message (before code snippets)
-    const parts = fullMessage.split('Code Snippets:');
-    let condensed = parts[0].trim();
-
-    // Add a count of affected files instead of showing all snippets
-    const codeBlockCount = (fullMessage.match(/```/g) || []).length / 2;
-    condensed += `\n(${codeBlockCount} file${codeBlockCount !== 1 ? 's' : ''} modified)`;
-
-    // Limit to a reasonable length
-    if (condensed.length > 500) {
-      condensed = condensed.substring(0, 497) + '...';
+    // Metadata-only summaries are already safe; just shorten for the modal.
+    const condensed = fullMessage.trim().replace(/\s+/g, ' ');
+    if (condensed.length > 300) {
+      return condensed.substring(0, 297) + '...';
     }
-
     return condensed;
   }
 

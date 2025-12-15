@@ -417,13 +417,18 @@ async function restoreAuthenticationState(
 
     if (session) {
       services.githubService.setToken(session.accessToken);
-      const username = await services.githubService.getUsername();
+      const identity = await services.githubService.getAuthenticatedIdentity();
+      const username = identity?.login ?? (await services.githubService.getUsername());
 
       if (username === persistedState.username) {
         const repoName = persistedState.repoName || 'code-tracking';
         const remoteUrl = `https://github.com/${username}/${repoName}.git`;
 
         await services.gitService.ensureRepoSetup(remoteUrl);
+        // Ensure commits are authored as the authenticated GitHub user
+        if (identity) {
+          await services.gitService.configureCommitAttribution(identity);
+        }
         await initializeTracker(services);
 
         updateStatusBar(services, 'auth', true);
@@ -827,7 +832,8 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
 
     // Initialize GitHub service
     services.githubService.setToken(session.accessToken);
-    const username = await services.githubService.getUsername();
+    const identity = await services.githubService.getAuthenticatedIdentity();
+    const username = identity?.login ?? (await services.githubService.getUsername());
 
     if (!username) {
       throw new Error('Unable to retrieve GitHub username.');
@@ -836,12 +842,19 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
     // Setup repository
     const config = vscode.workspace.getConfiguration('devtrack');
     const repoName = config.get<string>('repoName') || 'code-tracking';
+    const repoVisibility =
+      config.get<string>('repoVisibility') || 'private';
+    const isPrivateRepo = repoVisibility !== 'public';
     const remoteUrl = `https://github.com/${username}/${repoName}.git`;
 
     // Create repository if it doesn't exist
     const repoExists = await services.githubService.repoExists(repoName);
     if (!repoExists) {
-      const createdRepoUrl = await services.githubService.createRepo(repoName);
+      const createdRepoUrl = await services.githubService.createRepo(
+        repoName,
+        'DevTrack Repository',
+        isPrivateRepo
+      );
       if (!createdRepoUrl) {
         throw new Error('Failed to create GitHub repository.');
       }
@@ -849,6 +862,10 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
 
     // Initialize Git repository
     await services.gitService.ensureRepoSetup(remoteUrl);
+    // Ensure commits are authored as the authenticated GitHub user
+    if (identity) {
+      await services.gitService.configureCommitAttribution(identity);
+    }
 
     // Initialize tracker
     await initializeTracker(services);
