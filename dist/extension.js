@@ -10423,6 +10423,10 @@ var _GitService = class _GitService extends import_events.EventEmitter {
       throw error;
     }
   }
+  isNonFastForwardPushError(error) {
+    const msg = String((error == null ? void 0 : error.message) || "");
+    return msg.includes("[rejected]") || msg.toLowerCase().includes("fetch first") || msg.toLowerCase().includes("non-fast-forward") || msg.toLowerCase().includes("failed to push some refs");
+  }
   async updateTrackingMetadata(data) {
     const metadataPath = path2.join(this.currentTrackingDir, "tracking.json");
     let metadata;
@@ -10951,6 +10955,24 @@ node_modules/
             if (pushError.message.includes("no upstream branch")) {
               await this.setupRemoteTracking();
               await this.git.push(["origin", currentBranch]);
+              this.emitSafe("push", currentBranch);
+            } else if (this.isNonFastForwardPushError(pushError)) {
+              this.outputChannel.appendLine(
+                "DevTrack: Push rejected (remote ahead). Attempting rebase and retry..."
+              );
+              try {
+                await this.syncWithRemoteRebase(currentBranch);
+                await this.git.push(["origin", currentBranch]);
+                this.emitSafe("push", currentBranch);
+              } catch (retryError) {
+                const retryMsg = String((retryError == null ? void 0 : retryError.message) || retryError);
+                this.outputChannel.appendLine(
+                  `DevTrack: Auto-sync failed; cannot push safely. ${retryMsg}`
+                );
+                throw new Error(
+                  "Remote tracking repo has new commits that could not be rebased automatically. To fix: open the tracking repo directory (~/.devtrack/tracking/<workspaceId>), run `git pull --rebase`, resolve conflicts if any, then retry. If histories are unrelated, recreate the tracking repo or clear the local tracking directory for this workspace."
+                );
+              }
             } else {
               throw pushError;
             }
@@ -13491,7 +13513,7 @@ Updated files`;
 var vscode8 = __toESM(require("vscode"));
 var import_node_timers2 = require("timers");
 var Scheduler2 = class {
-  constructor(commitFrequency, tracker, summaryGenerator, gitService, outputChannel) {
+  constructor(commitFrequency, tracker, summaryGenerator, gitService, outputChannel, countdownStatusBarItem) {
     this.commitFrequency = commitFrequency;
     this.tracker = tracker;
     this.summaryGenerator = summaryGenerator;
@@ -13514,10 +13536,7 @@ var Scheduler2 = class {
       // 15 minutes
       enableAdaptiveScheduling: true
     };
-    this.statusBarItem = vscode8.window.createStatusBarItem(
-      vscode8.StatusBarAlignment.Right,
-      99
-    );
+    this.statusBarItem = countdownStatusBarItem ?? vscode8.window.createStatusBarItem(vscode8.StatusBarAlignment.Right, 99);
     this.statusBarItem.tooltip = "Time until next DevTrack commit";
     this.statusBarItem.command = "devtrack.commitNow";
     this.tracker.on("activityMetrics", (metrics) => {
@@ -13746,7 +13765,6 @@ var Scheduler2 = class {
   }
   dispose() {
     this.stop();
-    this.statusBarItem.dispose();
   }
 };
 
@@ -14469,7 +14487,6 @@ async function handlePauseTracking(services) {
   services.tracker.stopTracking();
   services.scheduler.stop();
   updateStatusBar(services, "tracking", false);
-  services.countdownStatusBar.hide();
   vscode10.window.showInformationMessage("DevTrack: Tracking paused");
   vscode10.commands.executeCommand("setContext", "devtrack:isTracking", false);
 }
@@ -14481,7 +14498,6 @@ async function handleResumeTracking(services) {
   services.tracker.startTracking();
   services.scheduler.start();
   updateStatusBar(services, "tracking", true);
-  services.countdownStatusBar.show();
   vscode10.window.showInformationMessage("DevTrack: Tracking resumed");
   vscode10.commands.executeCommand("setContext", "devtrack:isTracking", true);
 }
@@ -14506,7 +14522,6 @@ async function handleStartTracking(services) {
       services.scheduler.start();
       services.tracker.startTracking();
       updateStatusBar(services, "tracking", true);
-      services.countdownStatusBar.show();
       vscode10.window.showInformationMessage("DevTrack: Tracking started.");
       vscode10.commands.executeCommand("setContext", "devtrack:isTracking", true);
       vscode10.commands.executeCommand("setContext", "devtrack:isInitialized", true);
@@ -14529,7 +14544,6 @@ async function handleStopTracking(services) {
     services.scheduler.stop();
     services.tracker.stopTracking();
     updateStatusBar(services, "tracking", false);
-    services.countdownStatusBar.hide();
     vscode10.window.showInformationMessage("DevTrack: Tracking stopped.");
     vscode10.commands.executeCommand("setContext", "devtrack:isTracking", false);
   } else {
@@ -14770,7 +14784,6 @@ async function initializeDevTrack(services) {
     await initializeTracker(services);
     updateStatusBar(services, "auth", true);
     updateStatusBar(services, "tracking", true);
-    services.countdownStatusBar.show();
     vscode10.commands.executeCommand("setContext", "devtrack:isInitialized", true);
     vscode10.commands.executeCommand("setContext", "devtrack:isTracking", true);
     await services.extensionContext.globalState.update("devtrackAuthState", {
@@ -14797,11 +14810,11 @@ async function initializeTracker(services) {
     services.tracker,
     services.summaryGenerator,
     services.gitService,
-    services.outputChannel
+    services.outputChannel,
+    services.countdownStatusBar
   );
   services.tracker.startTracking();
   services.scheduler.start();
-  services.countdownStatusBar.show();
   services.outputChannel.appendLine(
     `DevTrack: Tracker initialized with ${commitFrequency} minute intervals`
   );
@@ -14864,7 +14877,6 @@ function cleanup(services) {
     services.tracker.stopTracking();
     updateStatusBar(services, "auth", false);
     updateStatusBar(services, "tracking", false);
-    services.countdownStatusBar.hide();
     services.outputChannel.appendLine("DevTrack: Cleaned up services");
   } catch (error) {
     services.outputChannel.appendLine(

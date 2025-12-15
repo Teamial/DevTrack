@@ -36,7 +36,8 @@ export class Scheduler {
     private tracker: Tracker,
     private summaryGenerator: SummaryGenerator,
     private gitService: GitService,
-    private outputChannel: OutputChannel
+    private outputChannel: OutputChannel,
+    countdownStatusBarItem?: vscode.StatusBarItem
   ) {
     // Default options
     this.options = {
@@ -47,11 +48,10 @@ export class Scheduler {
       enableAdaptiveScheduling: true,
     };
 
-    // Create status bar item for countdown
-    this.statusBarItem = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      99
-    );
+    // Use provided countdown status bar item to avoid duplicates; otherwise create one.
+    this.statusBarItem =
+      countdownStatusBarItem ??
+      vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
     this.statusBarItem.tooltip = 'Time until next DevTrack commit';
     this.statusBarItem.command = 'devtrack.commitNow';
 
@@ -359,6 +359,8 @@ export class Scheduler {
 
   dispose() {
     this.stop();
-    this.statusBarItem.dispose();
+    // Only dispose if Scheduler created its own (not passed in)
+    // We detect this by checking whether the item is already in VS Code subscriptions externally.
+    // Since we can't reliably detect ownership, we avoid disposing here to prevent disposing a shared item.
   }
 }

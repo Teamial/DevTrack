@@ -533,7 +533,6 @@ async function handlePauseTracking(services: DevTrackServices): Promise<void> {
   services.tracker.stopTracking();
   services.scheduler.stop();
   updateStatusBar(services, 'tracking', false);
-  services.countdownStatusBar.hide();
   vscode.window.showInformationMessage('DevTrack: Tracking paused');
   vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
 }
@@ -547,7 +546,6 @@ async function handleResumeTracking(services: DevTrackServices): Promise<void> {
   services.tracker.startTracking();
   services.scheduler.start();
   updateStatusBar(services, 'tracking', true);
-  services.countdownStatusBar.show();
   vscode.window.showInformationMessage('DevTrack: Tracking resumed');
   vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
 }
@@ -576,7 +574,6 @@ async function handleStartTracking(services: DevTrackServices): Promise<void> {
       services.scheduler.start();
       services.tracker.startTracking(); // Make sure tracker is also tracking
       updateStatusBar(services, 'tracking', true);
-      services.countdownStatusBar.show(); // Show countdown
       vscode.window.showInformationMessage('DevTrack: Tracking started.');
       vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
       vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
@@ -601,7 +598,6 @@ async function handleStopTracking(services: DevTrackServices): Promise<void> {
     services.scheduler.stop();
     services.tracker.stopTracking(); // Stop the tracker too
     updateStatusBar(services, 'tracking', false);
-    services.countdownStatusBar.hide(); // Hide countdown
     vscode.window.showInformationMessage('DevTrack: Tracking stopped.');
     vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
   } else {
@@ -890,7 +886,6 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
     // Update UI and persist state
     updateStatusBar(services, 'auth', true);
     updateStatusBar(services, 'tracking', true);
-    services.countdownStatusBar.show();
     vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
     vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
 
@@ -922,13 +917,13 @@ async function initializeTracker(services: DevTrackServices): Promise<void> {
     services.tracker,
     services.summaryGenerator,
     services.gitService,
-    services.outputChannel
+    services.outputChannel,
+    services.countdownStatusBar
   );
 
   // Start tracker
   services.tracker.startTracking();
   services.scheduler.start();
-  services.countdownStatusBar.show();
 
   services.outputChannel.appendLine(
     `DevTrack: Tracker initialized with ${commitFrequency} minute intervals`
@@ -1033,7 +1028,6 @@ function cleanup(services: DevTrackServices): void {
     services.tracker.stopTracking();
     updateStatusBar(services, 'auth', false);
     updateStatusBar(services, 'tracking', false);
-    services.countdownStatusBar.hide();
     services.outputChannel.appendLine('DevTrack: Cleaned up services');
   } catch (error: any) {
     services.outputChannel.appendLine(
