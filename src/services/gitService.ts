@@ -443,6 +443,37 @@ export class GitService extends EventEmitter {
     }
   }
 
+  private async syncWithRemoteRebase(branch: string): Promise<void> {
+    if (!this.git) {
+      throw new Error('Git not initialized');
+    }
+
+    try {
+      await this.git.fetch('origin', branch);
+      // Rebase local commits on top of remote to reduce merge commits and conflicts.
+      await this.git.raw(['rebase', `origin/${branch}`]);
+      this.outputChannel.appendLine('DevTrack: Synced with remote via rebase');
+    } catch (error: any) {
+      // Attempt to abort a partial rebase so future attempts work.
+      try {
+        await this.git.raw(['rebase', '--abort']);
+      } catch {
+        // ignore
+      }
+      throw error;
+    }
+  }
+
+  private isNonFastForwardPushError(error: any): boolean {
+    const msg = String(error?.message || '');
+    return (
+      msg.includes('[rejected]') ||
+      msg.toLowerCase().includes('fetch first') ||
+      msg.toLowerCase().includes('non-fast-forward') ||
+      msg.toLowerCase().includes('failed to push some refs')
+    );
+  }
+
   private async updateTrackingMetadata(
     data: Partial<TrackingMetadata>
   ): Promise<void> {
@@ -1114,20 +1145,34 @@ try {
             await this.git.add('.');
           }
 
+          // If nothing is staged, do not create empty commits.
+          const status = await this.git.status();
+          if (
+            status.staged.length === 0 &&
+            status.created.length === 0 &&
+            status.modified.length === 0 &&
+            status.deleted.length === 0
+          ) {
+            this.outputChannel.appendLine(
+              'DevTrack: No changes staged; skipping commit'
+            );
+            return;
+          }
+
           // Commit with a metadata-only message
           await this.git.commit(message);
           this.emitSafe('commit', message);
           try {
-            // First try to sync with remote
+            // Sync using rebase to minimize conflicts/merges.
             try {
-              await this.git.fetch('origin', currentBranch);
-              await this.git.merge(['origin/' + currentBranch, '--allow-unrelated-histories', '--no-edit']);
-              this.outputChannel.appendLine('DevTrack: Synced with remote repository');
-            } catch (mergeError: any) {
-              this.outputChannel.appendLine(`DevTrack: Sync warning - ${mergeError.message}`);
-              // Continue anyway - we'll try to push
+              await this.syncWithRemoteRebase(currentBranch);
+            } catch (syncError: any) {
+              this.outputChannel.appendLine(
+                `DevTrack: Sync warning - ${syncError.message}`
+              );
+              // Continue anyway - we'll try to push; if rejected, user needs to resolve.
             }
-          
+
             // Try normal push first
             await this.git.push(['origin', currentBranch]);
             this.emitSafe('push', currentBranch);
@@ -1135,6 +1180,27 @@ try {
             if (pushError.message.includes('no upstream branch')) {
               await this.setupRemoteTracking();
               await this.git.push(['origin', currentBranch]);
+              this.emitSafe('push', currentBranch);
+            } else if (this.isNonFastForwardPushError(pushError)) {
+              // Remote advanced (another machine). Try: fetch + rebase + retry push once.
+              this.outputChannel.appendLine(
+                'DevTrack: Push rejected (remote ahead). Attempting rebase and retry...'
+              );
+              try {
+                await this.syncWithRemoteRebase(currentBranch);
+                await this.git.push(['origin', currentBranch]);
+                this.emitSafe('push', currentBranch);
+              } catch (retryError: any) {
+                const retryMsg = String(retryError?.message || retryError);
+                this.outputChannel.appendLine(
+                  `DevTrack: Auto-sync failed; cannot push safely. ${retryMsg}`
+                );
+                throw new Error(
+                  'Remote tracking repo has new commits that could not be rebased automatically. ' +
+                    'To fix: open the tracking repo directory (~/.devtrack/tracking/<workspaceId>), run `git pull --rebase`, resolve conflicts if any, then retry. ' +
+                    'If histories are unrelated, recreate the tracking repo or clear the local tracking directory for this workspace.'
+                );
+              }
             } else {
               throw pushError;
             }

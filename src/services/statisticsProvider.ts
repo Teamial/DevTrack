@@ -43,7 +43,21 @@ export class StatisticsProvider {
   async getStatistics(): Promise<CodingStatistics> {
     try {
       const changesDir = path.join(this.trackingDir, 'changes');
-      const files = await fs.promises.readdir(changesDir);
+      let files: string[] = [];
+      try {
+        files = await fs.promises.readdir(changesDir);
+      } catch (e) {
+        // No changes yet
+        return {
+          totalTime: 0,
+          filesModified: 0,
+          totalCommits: 0,
+          linesChanged: 0,
+          activityTimeline: [],
+          timeDistribution: [],
+          fileTypes: [],
+        };
+      }
 
       // Process all change files
       const stats = await this.processChangeFiles(files, changesDir);
@@ -79,10 +93,14 @@ export class StatisticsProvider {
       }
 
       const filePath = path.join(changesDir, file);
-      const content = await fs.promises.readFile(filePath, 'utf8');
-      const changeData = JSON.parse(content);
-
-      this.processChangeData(changeData, stats);
+      try {
+        const content = await fs.promises.readFile(filePath, 'utf8');
+        const changeData = JSON.parse(content);
+        this.processChangeData(changeData, stats);
+      } catch (e) {
+        // Skip invalid files
+        continue;
+      }
     }
 
     return {
@@ -92,9 +110,13 @@ export class StatisticsProvider {
   }
 
   private processChangeData(changeData: any, stats: any) {
+    // Expect TrackingLogEntryV1 shape
     const date = new Date(changeData.timestamp);
     const dateKey = date.toISOString().split('T')[0];
     const hour = date.getHours();
+    const totalChangedFiles =
+      changeData?.files?.totalChangedFiles ?? changeData?.files?.length ?? 0;
+    const activeTimeSeconds = changeData?.activity?.activeTimeSeconds ?? 0;
 
     // Update timeline data
     if (!stats.activityTimeline.has(dateKey)) {
@@ -107,25 +129,27 @@ export class StatisticsProvider {
     }
     const timelineData = stats.activityTimeline.get(dateKey);
     timelineData.commits++;
-    timelineData.filesChanged += changeData.files.length;
-    // Estimate lines changed based on file size changes
-    timelineData.linesChanged += this.estimateLineChanges(changeData);
+    timelineData.filesChanged += totalChangedFiles;
+    // Lines changed is not stored (privacy); keep a simple estimate
+    timelineData.linesChanged += this.estimateLineChanges(totalChangedFiles);
 
     // Update hourly distribution
     stats.timeData.set(hour, (stats.timeData.get(hour) || 0) + 1);
 
     // Update file type statistics
-    for (const file of changeData.files) {
-      const ext = path.extname(file).toLowerCase();
-      if (ext) {
-        stats.fileTypes.set(ext, (stats.fileTypes.get(ext) || 0) + 1);
+    const extensions: Record<string, number> | undefined =
+      changeData?.files?.extensions;
+    if (extensions && typeof extensions === 'object') {
+      for (const [ext, count] of Object.entries(extensions)) {
+        const key = (ext || 'unknown').toLowerCase();
+        stats.fileTypes.set(key, (stats.fileTypes.get(key) || 0) + Number(count || 0));
       }
     }
 
     // Update total statistics
     stats.totalCommits++;
-    stats.filesModified += changeData.files.length;
-    stats.linesChanged += this.estimateLineChanges(changeData);
+    stats.filesModified += totalChangedFiles;
+    stats.linesChanged += this.estimateLineChanges(totalChangedFiles);
   }
 
   private calculateTotalTime(timeline: ActivityData[]): number {
@@ -156,8 +180,8 @@ export class StatisticsProvider {
       .sort((a, b) => b.count - a.count);
   }
 
-  private estimateLineChanges(changeData: any): number {
-    // Simple estimation based on file content length
-    return changeData.files.length * 10; // Rough estimate
+  private estimateLineChanges(totalChangedFiles: number): number {
+    // Simple estimation based on file count (privacy-safe)
+    return totalChangedFiles * 10; // Rough estimate
   }
 }

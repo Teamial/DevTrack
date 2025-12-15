@@ -147,8 +147,16 @@ async function initializeServices(
     services.authStatusBar.show();
     // Countdown bar shows only when tracking is active
 
+    // Initialize command palette contexts
+    vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', false);
+    vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
+
     // Try to restore authentication state
-    await restoreAuthenticationState(context, services);
+    const restored = await restoreAuthenticationState(context, services);
+    if (restored) {
+      vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
+      vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
+    }
 
     return services;
   } catch (error) {
@@ -433,6 +441,8 @@ async function restoreAuthenticationState(
 
         updateStatusBar(services, 'auth', true);
         updateStatusBar(services, 'tracking', true);
+        vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
+        vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
 
         services.outputChannel.appendLine(
           'DevTrack: Successfully restored authentication state'
@@ -521,9 +531,11 @@ async function handlePauseTracking(services: DevTrackServices): Promise<void> {
   }
 
   services.tracker.stopTracking();
+  services.scheduler.stop();
   updateStatusBar(services, 'tracking', false);
   services.countdownStatusBar.hide();
   vscode.window.showInformationMessage('DevTrack: Tracking paused');
+  vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
 }
 
 async function handleResumeTracking(services: DevTrackServices): Promise<void> {
@@ -533,9 +545,11 @@ async function handleResumeTracking(services: DevTrackServices): Promise<void> {
   }
 
   services.tracker.startTracking();
+  services.scheduler.start();
   updateStatusBar(services, 'tracking', true);
   services.countdownStatusBar.show();
   vscode.window.showInformationMessage('DevTrack: Tracking resumed');
+  vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
 }
 
 function handleShowSettings(): void {
@@ -564,6 +578,8 @@ async function handleStartTracking(services: DevTrackServices): Promise<void> {
       updateStatusBar(services, 'tracking', true);
       services.countdownStatusBar.show(); // Show countdown
       vscode.window.showInformationMessage('DevTrack: Tracking started.');
+      vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
+      vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
     } else {
       const response = await vscode.window.showInformationMessage(
         'DevTrack needs to be set up before starting. Would you like to set it up now?',
@@ -587,6 +603,7 @@ async function handleStopTracking(services: DevTrackServices): Promise<void> {
     updateStatusBar(services, 'tracking', false);
     services.countdownStatusBar.hide(); // Hide countdown
     vscode.window.showInformationMessage('DevTrack: Tracking stopped.');
+    vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
   } else {
     vscode.window.showErrorMessage('DevTrack: Please connect to GitHub first.');
   }
@@ -874,6 +891,8 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
     updateStatusBar(services, 'auth', true);
     updateStatusBar(services, 'tracking', true);
     services.countdownStatusBar.show();
+    vscode.commands.executeCommand('setContext', 'devtrack:isInitialized', true);
+    vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
 
     await services.extensionContext.globalState.update('devtrackAuthState', {
       username,
@@ -945,7 +964,7 @@ async function handleConfigurationChange(
       const minActiveTimeForCommit =
         config.get<number>('minActiveTimeForCommit') || 60;
       const enableAdaptiveScheduling =
-        config.get<boolean>('enableAdaptiveScheduling') || true;
+        config.get<boolean>('enableAdaptiveScheduling') ?? true;
 
       services.scheduler.updateOptions({
         minChangesForCommit,

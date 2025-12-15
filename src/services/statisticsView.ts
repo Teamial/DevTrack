@@ -94,20 +94,8 @@ export class StatisticsView {
         'system'
       );
 
-      // Get the dashboard HTML content
-      const dashboardHtml = await fs.promises.readFile(
-        this.statsHtmlPath,
-        'utf8'
-      );
-
-      // Create webview content with current stats and theme
-      const webviewContent = this.getWebviewContent(
-        dashboardHtml,
-        stats,
-        savedTheme
-      );
-
-      this.panel.webview.html = webviewContent;
+      // Render a local, dependency-free dashboard (works in VS Code + Cursor without bundling)
+      this.panel.webview.html = this.getWebviewContent(stats, savedTheme);
 
       if (this.isFirstLoad) {
         this.isFirstLoad = false;
@@ -119,39 +107,102 @@ export class StatisticsView {
     }
   }
 
-  private getWebviewContent(
-    dashboardHtml: string,
-    stats: any,
-    theme: string
-  ): string {
-    // Get webview URIs for any local resources
-    const scriptUri = this.panel!.webview.asWebviewUri(
-      vscode.Uri.file(path.join(this.trackingDir, 'stats', 'dashboard.js'))
-    );
+  private getWebviewContent(stats: any, theme: string): string {
+    const safeStats = JSON.stringify(stats ?? {});
+    const safeTheme = JSON.stringify(theme ?? 'system');
 
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>DevTrack Statistics</title>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.0/Recharts.js"></script>
-        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-        <script>
-          window.vscode = acquireVsCodeApi();
-          window.initialStats = ${JSON.stringify(stats)};
-          window.initialTheme = "${theme}";
-        </script>
-      </head>
-      <body>
-        <div id="root"></div>
-        <script src="${scriptUri}"></script>
-      </body>
-      </html>
-    `;
+    // Minimal dashboard with no external dependencies (more reliable across IDEs).
+    return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DevTrack Statistics</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 16px; }
+      .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+      .card { border: 1px solid rgba(127,127,127,0.25); border-radius: 10px; padding: 12px; }
+      .label { opacity: 0.7; font-size: 12px; }
+      .value { font-size: 22px; font-weight: 700; margin-top: 6px; }
+      h2 { margin: 18px 0 10px; font-size: 16px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(127,127,127,0.25); font-size: 13px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+      @media (max-width: 980px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .row { grid-template-columns: 1fr; } }
+      button { padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.35); background: transparent; cursor: pointer; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .muted { opacity: 0.75; font-size: 12px; }
+    </style>
+    <script>
+      const vscode = acquireVsCodeApi();
+      const stats = ${safeStats};
+      const theme = ${safeTheme};
+      function fmt(n) { return typeof n === 'number' ? n.toLocaleString() : String(n ?? '0'); }
+      function render() {
+        document.getElementById('totalTime').textContent = fmt(Math.round((stats.totalTime ?? 0) * 10) / 10) + 'h';
+        document.getElementById('filesModified').textContent = fmt(stats.filesModified ?? 0);
+        document.getElementById('totalCommits').textContent = fmt(stats.totalCommits ?? 0);
+        document.getElementById('linesChanged').textContent = fmt(stats.linesChanged ?? 0);
+        const themeEl = document.getElementById('theme');
+        if (themeEl) themeEl.textContent = theme;
+
+        const ft = (stats.fileTypes ?? []).slice(0, 12);
+        document.getElementById('fileTypesBody').innerHTML = ft.map(r => 
+          '<tr><td>' + (r.name ?? 'Unknown') + '</td><td>' + fmt(r.count ?? 0) + '</td><td>' + fmt(r.percentage ?? 0) + '%</td></tr>'
+        ).join('') || '<tr><td colspan=\"3\" class=\"muted\">No data yet</td></tr>';
+
+        const tl = (stats.activityTimeline ?? []).slice(-14);
+        document.getElementById('timelineBody').innerHTML = tl.map(r =>
+          '<tr><td>' + (r.date ?? '') + '</td><td>' + fmt(r.commits ?? 0) + '</td><td>' + fmt(r.filesChanged ?? 0) + '</td><td>' + fmt(r.linesChanged ?? 0) + '</td></tr>'
+        ).join('') || '<tr><td colspan=\"4\" class=\"muted\">No data yet</td></tr>';
+      }
+      window.addEventListener('message', (event) => {
+        const msg = event.data;
+        if (msg?.command === 'updateStats' && msg?.stats) {
+          Object.assign(stats, msg.stats);
+          render();
+        }
+      });
+      window.addEventListener('DOMContentLoaded', render);
+      function refresh() { vscode.postMessage({ command: 'refresh' }); }
+    </script>
+  </head>
+  <body>
+    <div class="topbar">
+      <div>
+        <div style="font-weight:700;">DevTrack Coding Statistics</div>
+        <div class="muted">Theme: <span id="theme"></span></div>
+      </div>
+      <button onclick="refresh()">Refresh</button>
+    </div>
+
+    <div style="height: 12px;"></div>
+    <div class="grid">
+      <div class="card"><div class="label">Total Coding Time</div><div class="value" id="totalTime">0h</div></div>
+      <div class="card"><div class="label">Files Modified</div><div class="value" id="filesModified">0</div></div>
+      <div class="card"><div class="label">Total Commits</div><div class="value" id="totalCommits">0</div></div>
+      <div class="card"><div class="label">Lines Changed (est.)</div><div class="value" id="linesChanged">0</div></div>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h2>Recent Activity (last 14 days with data)</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Commits</th><th>Files</th><th>Lines (est.)</th></tr></thead>
+          <tbody id="timelineBody"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>File Types</h2>
+        <table>
+          <thead><tr><th>Type</th><th>Count</th><th>%</th></tr></thead>
+          <tbody id="fileTypesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>`;
   }
 
   private getErrorContent(): string {
