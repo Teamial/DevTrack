@@ -92,7 +92,7 @@ export class GitService extends EventEmitter {
   // private currentTrackingDir: string = '';
   private projectIdentifier: string = '';
 
-  constructor(outputChannel: OutputChannel) {
+  constructor(outputChannel: OutputChannel, trackingDir?: string) {
     super();
     this.setMaxListeners(GitService.MAX_LISTENERS);
     this.outputChannel = outputChannel;
@@ -101,6 +101,11 @@ export class GitService extends EventEmitter {
     // Create base tracking directory in user's home
     const homeDir = process.env.HOME || process.env.USERPROFILE || '';
     this.baseTrackingDir = path.join(homeDir, '.devtrack');
+
+    // Allow caller to pin the tracking dir (multi-root support)
+    if (trackingDir) {
+      this.currentTrackingDir = trackingDir;
+    }
 
     // Ensure base directory exists
     if (!fs.existsSync(this.baseTrackingDir)) {
@@ -133,6 +138,86 @@ export class GitService extends EventEmitter {
 
     await this.ensureGitInitialized();
 
+    const config = vscode.workspace.getConfiguration('devtrack');
+    const strategy =
+      (config.get<'githubNoreply' | 'localGitConfig' | 'custom'>(
+        'authorStrategy'
+      ) ||
+        'githubNoreply') ??
+      'githubNoreply';
+
+    if (strategy === 'localGitConfig') {
+      // Do not override local repo config. Warn if it looks likely to not count.
+      const email = await this.tryGetLocalUserEmail();
+      if (!email || !this.looksLikeValidEmail(email)) {
+        void vscode.window
+          .showWarningMessage(
+            'DevTrack: Your Git author email is missing or invalid. GitHub contributions may not count for DevTrack commits.',
+            'Open Settings'
+          )
+          .then((choice) => {
+            if (choice === 'Open Settings') {
+              vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                'devtrack.authorStrategy'
+              );
+            }
+          });
+      } else if (!this.looksLikeGitHubLinkedEmail(email)) {
+        void vscode.window
+          .showWarningMessage(
+            `DevTrack: Your Git author email (${email}) may not be linked to GitHub. Contributions may not count.`,
+            'Open Settings'
+          )
+          .then((choice) => {
+            if (choice === 'Open Settings') {
+              vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                'devtrack.authorStrategy'
+              );
+            }
+          });
+      }
+      this.outputChannel.appendLine(
+        'DevTrack: Using local Git config for commit attribution (no override).'
+      );
+      return;
+    }
+
+    if (strategy === 'custom') {
+      const name = String(config.get<string>('authorName') || '').trim();
+      const email = String(config.get<string>('authorEmail') || '').trim();
+      if (!name || !email || !this.looksLikeValidEmail(email)) {
+        void vscode.window
+          .showWarningMessage(
+            'DevTrack: Custom author is selected but authorName/authorEmail is missing or invalid. Contributions may not count.',
+            'Open Settings'
+          )
+          .then((choice) => {
+            if (choice === 'Open Settings') {
+              vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                'devtrack.authorStrategy'
+              );
+            }
+          });
+      }
+      if (email && this.looksLikeValidEmail(email)) {
+        await this.git.addConfig(
+          'user.name',
+          name || identity.login,
+          false,
+          'local'
+        );
+        await this.git.addConfig('user.email', email, false, 'local');
+        this.outputChannel.appendLine(
+          `DevTrack: Configured tracking repo commit identity as ${name || identity.login} <${email}>`
+        );
+      }
+      return;
+    }
+
+    // Default: GitHub noreply
     const email = this.getGitHubNoReplyEmail(identity.login, identity.id);
     await this.git.addConfig('user.name', identity.login, false, 'local');
     await this.git.addConfig('user.email', email, false, 'local');
@@ -140,6 +225,41 @@ export class GitService extends EventEmitter {
     this.outputChannel.appendLine(
       `DevTrack: Configured tracking repo commit identity as ${identity.login} <${email}>`
     );
+  }
+
+  private looksLikeValidEmail(email: string): boolean {
+    if (!email) {
+      return false;
+    }
+    // Light heuristic
+    return email.includes('@') && !email.includes(' ') && !email.endsWith('@');
+  }
+
+  private looksLikeGitHubLinkedEmail(email: string): boolean {
+    if (!this.looksLikeValidEmail(email)) {
+      return false;
+    }
+    // Strong signals that usually count if account is configured correctly
+    if (email.endsWith('@users.noreply.github.com')) {
+      return true;
+    }
+    // Otherwise unknown; treat as possibly unlinked
+    return false;
+  }
+
+  private async tryGetLocalUserEmail(): Promise<string | null> {
+    try {
+      const res = await this.git.raw([
+        'config',
+        '--local',
+        '--get',
+        'user.email',
+      ]);
+      const v = String(res || '').trim();
+      return v || null;
+    } catch {
+      return null;
+    }
   }
   private setupDefaultErrorHandler(): void {
     if (this.listenerCount('error') === 0) {
@@ -336,6 +456,10 @@ export class GitService extends EventEmitter {
 
   private async createTrackingDirectory(): Promise<void> {
     try {
+      if (this.currentTrackingDir) {
+        await fs.promises.mkdir(this.currentTrackingDir, { recursive: true });
+        return;
+      }
       if (!this.currentTrackingDir) {
         const homeDir = process.env.HOME || process.env.USERPROFILE;
         if (!homeDir) {

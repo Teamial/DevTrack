@@ -12,6 +12,10 @@ import { ChangeAnalyzer } from './services/changeAnalyzer';
 import { platform, homedir } from 'os';
 import { StatisticsProvider } from './services/statisticsProvider';
 import { StatisticsView } from './services/statisticsView';
+import { BufferedOutputChannel } from './services/bufferedOutputChannel';
+import { exportDiagnostics } from './services/diagnostics';
+import { WorkspaceCoordinator } from './services/workspaceCoordinator';
+import type { WorkspaceRuntime } from './services/workspaceCoordinator';
 
 // Interfaces
 interface PersistedAuthState {
@@ -34,6 +38,7 @@ interface DevTrackServices {
   changeAnalyzer: ChangeAnalyzer;
   statisticsProvider?: StatisticsProvider;
   statisticsView?: StatisticsView;
+  workspaceCoordinator: WorkspaceCoordinator;
 }
 
 // Extension Activation
@@ -41,7 +46,8 @@ export async function activate(
   context: vscode.ExtensionContext
 ): Promise<void> {
   // Create output channel first to be used throughout
-  const channel = vscode.window.createOutputChannel('DevTrack');
+  const rawChannel = vscode.window.createOutputChannel('DevTrack');
+  const channel = new BufferedOutputChannel(rawChannel, 500);
   context.subscriptions.push(channel);
   channel.appendLine('DevTrack: Extension activating...');
 
@@ -71,13 +77,20 @@ export async function activate(
     const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(
       () => {
         updateWorkspaceUI(services);
+        syncActiveWorkspaceStatus(services);
         attemptAutoStart(services);
       }
     );
     context.subscriptions.push(workspaceWatcher);
 
     updateWorkspaceUI(services);
+    syncActiveWorkspaceStatus(services);
     attemptAutoStart(services);
+
+    const editorWatcher = vscode.window.onDidChangeActiveTextEditor(() => {
+      syncActiveWorkspaceStatus(services);
+    });
+    context.subscriptions.push(editorWatcher);
 
     // If autoStart is enabled, skip welcome prompt to avoid double prompting.
     const config = vscode.workspace.getConfiguration('devtrack');
@@ -106,6 +119,11 @@ function updateWorkspaceUI(services: DevTrackServices): void {
         services.scheduler.stop();
         services.scheduler = null;
       }
+      for (const runtime of services.workspaceCoordinator.getAllRuntimes()) {
+        runtime.tracker.stopTracking();
+        runtime.scheduler?.stop();
+        runtime.scheduler = null;
+      }
     } catch {
       // ignore
     }
@@ -133,7 +151,12 @@ function updateWorkspaceUI(services: DevTrackServices): void {
   services.trackingStatusBar.show();
   services.authStatusBar.show();
   // Countdown is controlled by Scheduler; keep it hidden unless tracking is active.
-  if (!services.scheduler) {
+  const anyTracking =
+    services.scheduler ||
+    services.workspaceCoordinator
+      .getAllRuntimes()
+      .some((r) => Boolean(r.scheduler));
+  if (!anyTracking) {
     services.countdownStatusBar.hide();
   }
 }
@@ -146,7 +169,12 @@ async function attemptAutoStart(services: DevTrackServices): Promise<void> {
   }
 
   // If already initialized, nothing to do.
-  if (services.scheduler) {
+  const anyTracking =
+    services.scheduler ||
+    services.workspaceCoordinator
+      .getAllRuntimes()
+      .some((r) => Boolean(r.scheduler));
+  if (anyTracking) {
     return;
   }
 
@@ -187,8 +215,12 @@ async function initializeServices(
     const services: DevTrackServices = {
       outputChannel: channel,
       githubService: new GitHubService(channel),
-      gitService: new GitService(channel),
-      tracker: new Tracker(channel, trackingDir),
+      gitService: new GitService(channel, trackingDir),
+      tracker: new Tracker(
+        channel,
+        trackingDir,
+        vscode.workspace.workspaceFolders?.[0]
+      ),
       summaryGenerator: new SummaryGenerator(channel, context),
       scheduler: null,
       trackingStatusBar: createStatusBarItem('tracking'),
@@ -196,7 +228,16 @@ async function initializeServices(
       countdownStatusBar: createStatusBarItem('countdown'),
       extensionContext: context,
       changeAnalyzer: new ChangeAnalyzer(channel),
+      workspaceCoordinator: undefined as any,
     };
+
+    services.workspaceCoordinator = new WorkspaceCoordinator(
+      context,
+      channel,
+      services.githubService,
+      services.summaryGenerator,
+      services.countdownStatusBar
+    );
 
     // Initialize statistics provider if available
     try {
@@ -263,8 +304,9 @@ async function registerDashboardCommands(
   const showDashboardCommand = vscode.commands.registerCommand(
     'devtrack.showDashboard',
     async () => {
-      if (services.statisticsView) {
-        services.statisticsView.show();
+      const runtime = await services.workspaceCoordinator.selectRuntime();
+      if (runtime?.statisticsView) {
+        runtime.statisticsView.show();
       } else {
         vscode.window.showErrorMessage(
           'DevTrack: Statistics view not available'
@@ -278,7 +320,8 @@ async function registerDashboardCommands(
   const generateReportCommand = vscode.commands.registerCommand(
     'devtrack.generateReport',
     async () => {
-      if (!services.statisticsProvider) {
+      const runtime = await services.workspaceCoordinator.selectRuntime();
+      if (!runtime?.statisticsProvider) {
         vscode.window.showErrorMessage(
           'DevTrack: Statistics provider not available'
         );
@@ -294,7 +337,7 @@ async function registerDashboardCommands(
           },
           async (progress) => {
             progress.report({ message: 'Collecting statistics...' });
-            const stats = await services.statisticsProvider?.getStatistics();
+            const stats = await runtime.statisticsProvider?.getStatistics();
 
             if (!stats) {
               throw new Error('Failed to retrieve statistics');
@@ -377,22 +420,11 @@ async function registerWebsiteCommands(
               './services/websiteGenerator'
             );
 
-            // Get home directory and tracking path
-            const homeDir = homedir();
-
-            // Create workspace-specific tracking directory
-            const workspaceId = vscode.workspace.workspaceFolders?.[0]?.uri
-              .fsPath
-              ? Buffer.from(vscode.workspace.workspaceFolders[0].uri.fsPath)
-                  .toString('base64')
-                  .replace(/[/+=]/g, '_')
-              : 'default';
-            const trackingDir = path.join(
-              homeDir,
-              '.devtrack',
-              'tracking',
-              workspaceId
-            );
+            const runtime = await services.workspaceCoordinator.selectRuntime();
+            if (!runtime) {
+              throw new Error('No workspace folder selected.');
+            }
+            const trackingDir = runtime.trackingDir;
 
             progress.report({ message: 'Generating website files...' });
 
@@ -406,7 +438,7 @@ async function registerWebsiteCommands(
             progress.report({ message: 'Committing changes...' });
 
             // Instead of directly accessing git, use commitAndPush method
-            await services.gitService.commitAndPush(
+            await runtime.gitService.commitAndPush(
               'DevTrack: Update statistics website'
             );
 
@@ -522,12 +554,11 @@ async function restoreAuthenticationState(
         const repoName = persistedState.repoName || 'code-tracking';
         const remoteUrl = `https://github.com/${username}/${repoName}.git`;
 
-        await services.gitService.ensureRepoSetup(remoteUrl);
-        // Ensure commits are authored as the authenticated GitHub user
-        if (identity) {
-          await services.gitService.configureCommitAttribution(identity);
+        const runtime = await services.workspaceCoordinator.selectRuntime();
+        if (!runtime) {
+          return false;
         }
-        await initializeTracker(services);
+        await services.workspaceCoordinator.startTracking(runtime, remoteUrl);
 
         updateStatusBar(services, 'auth', true);
         updateStatusBar(services, 'tracking', true);
@@ -603,6 +634,22 @@ async function registerCommands(
       command: 'devtrack.showSettings',
       callback: () => handleShowSettings(),
     },
+    {
+      command: 'devtrack.previewNextCommit',
+      callback: () => handlePreviewNextCommit(services),
+    },
+    {
+      command: 'devtrack.exportDiagnostics',
+      callback: () =>
+        exportDiagnostics({
+          context: services.extensionContext,
+          outputChannel: services.outputChannel as any,
+        }),
+    },
+    {
+      command: 'devtrack.resetTrackingRepo',
+      callback: () => handleResetTrackingRepo(services),
+    },
   ];
 
   commands.forEach(({ command, callback }) => {
@@ -612,37 +659,213 @@ async function registerCommands(
   });
 }
 
+async function handlePreviewNextCommit(
+  services: DevTrackServices
+): Promise<void> {
+  const runtime = await services.workspaceCoordinator.selectRuntime();
+  if (!runtime) {
+    vscode.window.showErrorMessage('DevTrack: No workspace folder selected.');
+    return;
+  }
+
+  const metrics = runtime.tracker.getActivityMetrics();
+  const changed = runtime.tracker.getChangedFiles();
+
+  const extCounts = new Map<string, number>();
+  for (const c of changed) {
+    const ext = path.extname(c.uri.fsPath || '').toLowerCase() || '<none>';
+    extCounts.set(ext, (extCounts.get(ext) || 0) + 1);
+  }
+  const topExt = Array.from(extCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([ext, count]) => `${ext}: ${count}`)
+    .join(', ');
+
+  let nextCommit = 'Not tracking';
+  if (runtime.scheduler) {
+    const ms = runtime.scheduler.getTimeUntilNextCommitMs();
+    if (runtime.scheduler.isPaused()) {
+      nextCommit = 'Paused (inactivity)';
+    } else if (typeof ms === 'number') {
+      const totalSeconds = Math.ceil(ms / 1000);
+      const mm = Math.floor(totalSeconds / 60);
+      const ss = totalSeconds % 60;
+      nextCommit = `${mm}:${ss.toString().padStart(2, '0')}`;
+    } else {
+      nextCommit = 'Unknown';
+    }
+  }
+
+  const message = `Workspace: ${runtime.folder.name}
+Tracking: ${runtime.scheduler ? 'Active' : 'Inactive'}
+Next commit: ${nextCommit}
+
+Changed files: ${changed.length}
+Top extensions: ${topExt || 'n/a'}
+Active time: ${Math.round(metrics.activeTime / 60)} min
+Keystrokes: ${metrics.keystrokes}
+File change events: ${metrics.fileChanges}`;
+
+  const commitNow = 'Commit Now';
+  const pause = 'Pause';
+  const openTrackingRepo = 'Open Tracking Repo';
+  const startTracking = 'Start Tracking';
+
+  const actions = runtime.scheduler
+    ? [commitNow, pause, openTrackingRepo]
+    : [startTracking, openTrackingRepo];
+
+  const selection = await vscode.window.showInformationMessage(
+    message,
+    {
+      modal: false,
+      detail: 'Preview is local-only; nothing is sent anywhere.',
+    },
+    ...actions
+  );
+
+  if (selection === openTrackingRepo) {
+    await vscode.commands.executeCommand(
+      'revealFileInOS',
+      vscode.Uri.file(runtime.trackingDir)
+    );
+  } else if (selection === commitNow && runtime.scheduler) {
+    await runtime.scheduler.commitNow();
+  } else if (selection === pause && runtime.scheduler) {
+    runtime.tracker.stopTracking();
+    runtime.scheduler.stop();
+    runtime.scheduler = null;
+    syncActiveWorkspaceStatus(services);
+  } else if (selection === startTracking) {
+    await handleStartTracking(services);
+  }
+}
+
+async function handleResetTrackingRepo(
+  services: DevTrackServices
+): Promise<void> {
+  if (!vscode.workspace.workspaceFolders?.length) {
+    vscode.window.showErrorMessage(
+      'DevTrack: Open a folder to reset tracking.'
+    );
+    return;
+  }
+
+  const runtime = await services.workspaceCoordinator.selectRuntime();
+  if (!runtime) {
+    vscode.window.showErrorMessage('DevTrack: No workspace folder selected.');
+    return;
+  }
+
+  const choice = await vscode.window.showWarningMessage(
+    'Reset DevTrack tracking repo for this workspace?\n\nThis will stop tracking temporarily.',
+    { modal: true, detail: 'Choose a reset mode.' },
+    'Reset Git Only',
+    'Delete & Recreate',
+    'Cancel'
+  );
+  if (!choice || choice === 'Cancel') {
+    return;
+  }
+
+  // Stop active services without logging out
+  try {
+    runtime.tracker.stopTracking();
+    runtime.scheduler?.stop();
+    runtime.scheduler = null;
+  } catch {
+    // ignore
+  }
+
+  const trackingDir = runtime.trackingDir;
+
+  try {
+    if (choice === 'Delete & Recreate') {
+      await fs.promises.rm(trackingDir, { recursive: true, force: true });
+      await fs.promises.mkdir(trackingDir, { recursive: true });
+    } else {
+      // Reset Git only
+      await fs.promises.rm(path.join(trackingDir, '.git'), {
+        recursive: true,
+        force: true,
+      });
+    }
+  } catch (error: any) {
+    services.outputChannel.appendLine(
+      `DevTrack: Failed to reset tracking repo - ${error?.message || error}`
+    );
+    vscode.window.showErrorMessage('DevTrack: Failed to reset tracking repo.');
+    return;
+  }
+
+  // Re-initialize repo if we have auth state
+  const persisted =
+    services.extensionContext.globalState.get<PersistedAuthState>(
+      'devtrackAuthState'
+    );
+  if (!persisted?.username) {
+    vscode.window.showInformationMessage(
+      'DevTrack: Tracking repo reset. Log in to GitHub to reinitialize remote tracking.'
+    );
+    updateStatusBar(services, 'tracking', false);
+    vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
+    return;
+  }
+
+  const repoName = persisted.repoName || 'code-tracking';
+  const remoteUrl = `https://github.com/${persisted.username}/${repoName}.git`;
+
+  try {
+    await services.workspaceCoordinator.startTracking(runtime, remoteUrl);
+    vscode.window.showInformationMessage(
+      'DevTrack: Tracking repo reset and reinitialized successfully.'
+    );
+  } catch (error: any) {
+    services.outputChannel.appendLine(
+      `DevTrack: Failed to reinitialize tracking repo - ${error?.message || error}`
+    );
+    vscode.window.showErrorMessage(
+      'DevTrack: Reset succeeded, but reinitialization failed. Try logging in again.'
+    );
+  }
+}
+
 // New command handlers
 async function handleCommitNow(services: DevTrackServices): Promise<void> {
-  if (!services.scheduler) {
+  const runtime = await services.workspaceCoordinator.selectRuntime();
+  if (!runtime?.scheduler) {
     vscode.window.showErrorMessage('DevTrack: Tracking not active');
     return;
   }
 
-  await services.scheduler.commitNow();
+  await runtime.scheduler.commitNow();
 }
 
 async function handlePauseTracking(services: DevTrackServices): Promise<void> {
-  if (!services.scheduler) {
+  const runtime = await services.workspaceCoordinator.selectRuntime();
+  if (!runtime?.scheduler) {
     vscode.window.showErrorMessage('DevTrack: Tracking not active');
     return;
   }
 
-  services.tracker.stopTracking();
-  services.scheduler.stop();
+  runtime.tracker.stopTracking();
+  runtime.scheduler.stop();
+  runtime.scheduler = null;
   updateStatusBar(services, 'tracking', false);
   vscode.window.showInformationMessage('DevTrack: Tracking paused');
   vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
 }
 
 async function handleResumeTracking(services: DevTrackServices): Promise<void> {
-  if (!services.scheduler) {
+  const runtime = await services.workspaceCoordinator.selectRuntime();
+  if (!runtime?.scheduler) {
     await handleStartTracking(services);
     return;
   }
 
-  services.tracker.startTracking();
-  services.scheduler.start();
+  runtime.tracker.startTracking();
+  runtime.scheduler.start();
   updateStatusBar(services, 'tracking', true);
   vscode.window.showInformationMessage('DevTrack: Tracking resumed');
   vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
@@ -668,9 +891,15 @@ async function handleStartTracking(services: DevTrackServices): Promise<void> {
       return;
     }
 
-    if (services.scheduler) {
-      services.scheduler.start();
-      services.tracker.startTracking(); // Make sure tracker is also tracking
+    const runtime = await services.workspaceCoordinator.selectRuntime();
+    if (!runtime) {
+      vscode.window.showErrorMessage('DevTrack: No workspace folder selected.');
+      return;
+    }
+
+    if (runtime.scheduler) {
+      runtime.scheduler.start();
+      runtime.tracker.startTracking();
       updateStatusBar(services, 'tracking', true);
       vscode.window.showInformationMessage('DevTrack: Tracking started.');
       vscode.commands.executeCommand('setContext', 'devtrack:isTracking', true);
@@ -679,26 +908,21 @@ async function handleStartTracking(services: DevTrackServices): Promise<void> {
         'devtrack:isInitialized',
         true
       );
-    } else {
-      const response = await vscode.window.showInformationMessage(
-        'DevTrack needs to be set up before starting. Would you like to set it up now?',
-        'Set Up DevTrack',
-        'Cancel'
-      );
-
-      if (response === 'Set Up DevTrack') {
-        await initializeDevTrack(services);
-      }
+      return;
     }
+
+    await initializeDevTrack(services, runtime);
   } catch (error: unknown) {
     handleError(services, 'Error starting tracking', error as Error);
   }
 }
 
 async function handleStopTracking(services: DevTrackServices): Promise<void> {
-  if (services.scheduler) {
-    services.scheduler.stop();
-    services.tracker.stopTracking(); // Stop the tracker too
+  const runtime = await services.workspaceCoordinator.selectRuntime();
+  if (runtime?.scheduler) {
+    runtime.scheduler.stop();
+    runtime.scheduler = null;
+    runtime.tracker.stopTracking();
     updateStatusBar(services, 'tracking', false);
     vscode.window.showInformationMessage('DevTrack: Tracking stopped.');
     vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
@@ -919,7 +1143,10 @@ Fedora:
 }
 
 // DevTrack Initialization
-async function initializeDevTrack(services: DevTrackServices): Promise<void> {
+async function initializeDevTrack(
+  services: DevTrackServices,
+  runtime?: WorkspaceRuntime
+): Promise<void> {
   try {
     services.outputChannel.appendLine('DevTrack: Starting initialization...');
 
@@ -975,15 +1202,12 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
       }
     }
 
-    // Initialize Git repository
-    await services.gitService.ensureRepoSetup(remoteUrl);
-    // Ensure commits are authored as the authenticated GitHub user
-    if (identity) {
-      await services.gitService.configureCommitAttribution(identity);
+    const targetRuntime =
+      runtime ?? (await services.workspaceCoordinator.selectRuntime());
+    if (!targetRuntime) {
+      throw new Error('No workspace folder selected.');
     }
-
-    // Initialize tracker
-    await initializeTracker(services);
+    await services.workspaceCoordinator.startTracking(targetRuntime, remoteUrl);
 
     // Update UI and persist state
     updateStatusBar(services, 'auth', true);
@@ -1013,29 +1237,6 @@ async function initializeDevTrack(services: DevTrackServices): Promise<void> {
   }
 }
 
-// Tracker Initialization
-async function initializeTracker(services: DevTrackServices): Promise<void> {
-  const config = vscode.workspace.getConfiguration('devtrack');
-  const commitFrequency = config.get<number>('commitFrequency') || 30;
-
-  services.scheduler = new Scheduler(
-    commitFrequency,
-    services.tracker,
-    services.summaryGenerator,
-    services.gitService,
-    services.outputChannel,
-    services.countdownStatusBar
-  );
-
-  // Start tracker
-  services.tracker.startTracking();
-  services.scheduler.start();
-
-  services.outputChannel.appendLine(
-    `DevTrack: Tracker initialized with ${commitFrequency} minute intervals`
-  );
-}
-
 // Configuration Handling
 function setupConfigurationHandling(services: DevTrackServices): void {
   vscode.workspace.onDidChangeConfiguration((event) => {
@@ -1051,30 +1252,64 @@ async function handleConfigurationChange(
   try {
     const config = vscode.workspace.getConfiguration('devtrack');
 
-    // Update commit frequency if scheduler exists
+    const newFrequency = config.get<number>('commitFrequency') || 30;
+    const minChangesForCommit = config.get<number>('minChangesForCommit') || 1;
+    const minActiveTimeForCommit =
+      config.get<number>('minActiveTimeForCommit') || 60;
+    const enableAdaptiveScheduling =
+      config.get<boolean>('enableAdaptiveScheduling') ?? true;
+    const maxIdleTimeBeforePause =
+      config.get<number>('maxIdleTimeBeforePause') || 900;
+    const adaptiveEarlyCommitAfterFraction =
+      config.get<number>('adaptiveEarlyCommitAfterFraction') ?? 0.5;
+    const adaptiveMinDistinctFiles =
+      config.get<number>('adaptiveMinDistinctFiles') ?? 3;
+    const adaptiveMinKeystrokes =
+      config.get<number>('adaptiveMinKeystrokes') ?? 120;
+    const newExcludePatterns = config.get<string[]>('exclude') || [];
+    const trackKeystrokes = config.get<boolean>('trackKeystrokes', true);
+    const trackedExtensionsMode =
+      (config.get<'all' | 'list'>('trackedExtensionsMode') || 'all') === 'list'
+        ? 'list'
+        : 'all';
+    const trackedExtensions = config.get<string[]>('trackedExtensions') || [];
+    const defaultIgnoredFoldersEnabled = config.get<boolean>(
+      'defaultIgnoredFoldersEnabled',
+      true
+    );
+    const defaultIgnoredFolders =
+      config.get<string[]>('defaultIgnoredFolders') || [];
+    const changeDebounceMs = config.get<number>('changeDebounceMs', 750);
+
+    // Multi-root: apply updates to all instantiated runtimes
+    for (const runtime of services.workspaceCoordinator.getAllRuntimes()) {
+      runtime.tracker.updateExcludePatterns(newExcludePatterns);
+      runtime.tracker.updateTrackingSettings({
+        maxIdleTimeBeforePauseSeconds: maxIdleTimeBeforePause,
+        trackKeystrokes,
+        trackedExtensionsMode,
+        trackedExtensions,
+        defaultIgnoredFoldersEnabled,
+        defaultIgnoredFolders,
+        changeDebounceMs,
+      });
+      if (runtime.scheduler) {
+        runtime.scheduler.updateFrequency(newFrequency);
+        runtime.scheduler.updateOptions({
+          minChangesForCommit,
+          minActiveTimeForCommit,
+          enableAdaptiveScheduling,
+          maxIdleTimeBeforePause,
+          adaptiveEarlyCommitAfterFraction,
+          adaptiveMinDistinctFiles,
+          adaptiveMinKeystrokes,
+        });
+      }
+    }
+
+    // Legacy single-runtime fields (kept for compatibility)
     if (services.scheduler) {
-      const newFrequency = config.get<number>('commitFrequency') || 30;
       services.scheduler.updateFrequency(newFrequency);
-      services.outputChannel.appendLine(
-        `DevTrack: Updated commit frequency to ${newFrequency} minutes`
-      );
-
-      // Update scheduler options
-      const minChangesForCommit =
-        config.get<number>('minChangesForCommit') || 1;
-      const minActiveTimeForCommit =
-        config.get<number>('minActiveTimeForCommit') || 60;
-      const enableAdaptiveScheduling =
-        config.get<boolean>('enableAdaptiveScheduling') ?? true;
-      const maxIdleTimeBeforePause =
-        config.get<number>('maxIdleTimeBeforePause') || 900;
-      const adaptiveEarlyCommitAfterFraction =
-        config.get<number>('adaptiveEarlyCommitAfterFraction') ?? 0.5;
-      const adaptiveMinDistinctFiles =
-        config.get<number>('adaptiveMinDistinctFiles') ?? 3;
-      const adaptiveMinKeystrokes =
-        config.get<number>('adaptiveMinKeystrokes') ?? 120;
-
       services.scheduler.updateOptions({
         minChangesForCommit,
         minActiveTimeForCommit,
@@ -1085,16 +1320,18 @@ async function handleConfigurationChange(
         adaptiveMinKeystrokes,
       });
     }
-
-    // Update exclude patterns
-    const newExcludePatterns = config.get<string[]>('exclude') || [];
     services.tracker.updateExcludePatterns(newExcludePatterns);
     services.tracker.updateTrackingSettings({
-      maxIdleTimeBeforePauseSeconds:
-        config.get<number>('maxIdleTimeBeforePause') || 900,
-      trackKeystrokes: config.get<boolean>('trackKeystrokes', true),
+      maxIdleTimeBeforePauseSeconds: maxIdleTimeBeforePause,
+      trackKeystrokes,
+      trackedExtensionsMode,
+      trackedExtensions,
+      defaultIgnoredFoldersEnabled,
+      defaultIgnoredFolders,
+      changeDebounceMs,
     });
-    services.outputChannel.appendLine('DevTrack: Updated exclude patterns');
+
+    services.outputChannel.appendLine('DevTrack: Updated configuration');
   } catch (error: any) {
     handleError(services, 'Configuration update failed', error);
   }
@@ -1107,8 +1344,10 @@ function updateStatusBar(
   active: boolean
 ): void {
   if (type === 'tracking') {
+    const folder = services.workspaceCoordinator.getActiveFolder();
+    const suffix = folder ? ` (${folder.name})` : '';
     services.trackingStatusBar.text = active
-      ? '$(clock) DevTrack: Tracking'
+      ? `$(clock) DevTrack: Tracking${suffix}`
       : '$(circle-slash) DevTrack: Stopped';
     services.trackingStatusBar.tooltip = active
       ? 'Click to stop tracking'
@@ -1127,6 +1366,23 @@ function updateStatusBar(
       ? 'devtrack.logout'
       : 'devtrack.login';
   }
+}
+
+function syncActiveWorkspaceStatus(services: DevTrackServices): void {
+  const folder = services.workspaceCoordinator.getActiveFolder();
+  if (!folder) {
+    vscode.commands.executeCommand('setContext', 'devtrack:isTracking', false);
+    updateStatusBar(services, 'tracking', false);
+    return;
+  }
+  const runtime = services.workspaceCoordinator.tryGetRuntime(folder);
+  const isTracking = Boolean(runtime?.scheduler);
+  vscode.commands.executeCommand(
+    'setContext',
+    'devtrack:isTracking',
+    isTracking
+  );
+  updateStatusBar(services, 'tracking', isTracking);
 }
 
 // Error Handling

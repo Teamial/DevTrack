@@ -115,6 +115,23 @@
         "icon": "$(gear)"
       },
       {
+        "command": "devtrack.previewNextCommit",
+        "title": "DevTrack: Preview Next Commit",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(inspect)"
+      },
+      {
+        "command": "devtrack.exportDiagnostics",
+        "title": "DevTrack: Export Diagnostics",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "devtrack.resetTrackingRepo",
+        "title": "DevTrack: Reset Tracking Repo (This Workspace)",
+        "enablement": "workspaceFolderCount != 0",
+        "icon": "$(trash)"
+      },
+      {
         "command": "devtrack.test",
         "title": "DevTrack: Test Extension Loading"
       }
@@ -187,6 +204,48 @@
           ],
           "description": "List of glob patterns to exclude from tracking."
         },
+        "devtrack.defaultIgnoredFoldersEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ignore common generated folders by default (in addition to devtrack.exclude)."
+        },
+        "devtrack.defaultIgnoredFolders": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "node_modules",
+            "dist",
+            "out",
+            "build",
+            ".next",
+            ".nuxt",
+            "coverage",
+            ".turbo",
+            ".cache",
+            "target",
+            "vendor"
+          ],
+          "description": "Folder names that DevTrack will ignore when defaultIgnoredFoldersEnabled is true."
+        },
+        "devtrack.trackedExtensionsMode": {
+          "type": "string",
+          "enum": ["all", "list"],
+          "default": "all",
+          "description": "Which files DevTrack tracks: all files (filtered by excludes/ignored folders) or only the extensions in devtrack.trackedExtensions."
+        },
+        "devtrack.trackedExtensions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "File extensions to track when trackedExtensionsMode is 'list' (e.g. ['ts','tsx','js'])."
+        },
+        "devtrack.changeDebounceMs": {
+          "type": "number",
+          "default": 750,
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Debounce window (ms) for file watcher events to reduce noise from rapid saves/formatters."
+        },
         "devtrack.enableAdaptiveScheduling": {
           "type": "boolean",
           "default": true,
@@ -241,6 +300,22 @@
           "minimum": 300,
           "description": "Maximum idle time (in seconds) before tracking is paused."
         },
+        "devtrack.authorStrategy": {
+          "type": "string",
+          "enum": ["githubNoreply", "localGitConfig", "custom"],
+          "default": "githubNoreply",
+          "description": "How DevTrack sets commit author identity for the tracking repo. githubNoreply counts toward GitHub contributions most reliably."
+        },
+        "devtrack.authorName": {
+          "type": "string",
+          "default": "",
+          "description": "Custom commit author name when authorStrategy is 'custom'."
+        },
+        "devtrack.authorEmail": {
+          "type": "string",
+          "default": "",
+          "description": "Custom commit author email when authorStrategy is 'custom'. For contributions to count, this email must be associated with your GitHub account."
+        },
         "devtrack.showReportOnCommit": {
           "type": "boolean",
           "default": false,
@@ -272,13 +347,15 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.12.0",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
     "@types/minimatch": "^5.1.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.13.5",
+    "@types/yazl": "^2.4.6",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@types/vscode": "^1.96.0",

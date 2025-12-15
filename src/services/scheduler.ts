@@ -390,6 +390,26 @@ export class Scheduler {
     }
   }
 
+  public isPaused(): boolean {
+    return this.isPausedForInactivity;
+  }
+
+  public isActive(): boolean {
+    return this.isRunning;
+  }
+
+  public getTimeUntilNextCommitMs(): number | null {
+    if (!this.isRunning) {
+      return null;
+    }
+    if (this.isPausedForInactivity) {
+      return null;
+    }
+    const now = new Date();
+    const elapsedMs = now.getTime() - this.lastCommitTime.getTime();
+    return Math.max(0, this.commitFrequency * 60 * 1000 - elapsedMs);
+  }
+
   dispose() {
     this.stop();
     // Only dispose if Scheduler created its own (not passed in)

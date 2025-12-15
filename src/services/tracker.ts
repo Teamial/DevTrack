@@ -28,8 +28,34 @@ export class Tracker extends EventEmitter {
   private excludePatterns: string[] = [];
   private outputChannel: OutputChannel;
   private trackingDir: string;
+  private workspaceFolder?: vscode.WorkspaceFolder;
   private isInitialized: boolean = false;
   private isTracking: boolean = false;
+
+  // Noise reduction settings
+  private trackedExtensionsMode: 'all' | 'list' = 'all';
+  private trackedExtensionsSet: Set<string> = new Set();
+  private defaultIgnoredFoldersEnabled: boolean = true;
+  private defaultIgnoredFolders: Set<string> = new Set([
+    'node_modules',
+    'dist',
+    'out',
+    'build',
+    '.next',
+    '.nuxt',
+    'coverage',
+    '.turbo',
+    '.cache',
+    'target',
+    'vendor',
+  ]);
+  private changeDebounceMs: number = 750;
+  private readonly debounceTimers: Map<string, ReturnType<typeof setTimeout>> =
+    new Map();
+  private readonly pendingChangeTypes: Map<
+    string,
+    'added' | 'changed' | 'deleted'
+  > = new Map();
 
   // New activity tracking
   private activityTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -53,28 +79,22 @@ export class Tracker extends EventEmitter {
   private lastLogTimestamp: number = 0;
   private readonly LOG_THROTTLE_MS = 5000; // 5 seconds
 
-  constructor(outputChannel: OutputChannel, trackingDir: string) {
+  constructor(
+    outputChannel: OutputChannel,
+    trackingDir: string,
+    workspaceFolder?: vscode.WorkspaceFolder
+  ) {
     super();
     this.outputChannel = outputChannel;
     this.trackingDir = trackingDir;
+    this.workspaceFolder = workspaceFolder;
     this.initialize();
   }
 
   private async initialize() {
     try {
-      // Wait for workspace to be fully loaded
-      if (!vscode.workspace.workspaceFolders?.length) {
-        this.log('Waiting for workspace to load...');
-        const disposable = vscode.workspace.onDidChangeWorkspaceFolders(() => {
-          if (vscode.workspace.workspaceFolders?.length) {
-            this.initializeWatcher();
-            disposable.dispose();
-          }
-        });
-      } else {
-        await this.initializeWatcher();
-        this.setupActivityTracking();
-      }
+      await this.initializeWatcher();
+      this.setupActivityTracking();
     } catch (error) {
       this.outputChannel.appendLine(
         `DevTrack: Initialization error - ${error}`
@@ -90,6 +110,23 @@ export class Tracker extends EventEmitter {
         'trackKeystrokes',
         true
       );
+      this.trackedExtensionsMode =
+        (config.get<'all' | 'list'>('trackedExtensionsMode') || 'all') ===
+        'list'
+          ? 'list'
+          : 'all';
+      this.setTrackedExtensions(
+        config.get<string[]>('trackedExtensions') || []
+      );
+      this.defaultIgnoredFoldersEnabled = config.get<boolean>(
+        'defaultIgnoredFoldersEnabled',
+        true
+      );
+      this.setDefaultIgnoredFolders(
+        config.get<string[]>('defaultIgnoredFolders') || []
+      );
+      const debounceMs = config.get<number>('changeDebounceMs', 750);
+      this.changeDebounceMs = Math.max(0, Math.min(10000, debounceMs));
       // maxIdleTimeBeforePause is seconds in settings
       const maxIdleSeconds = config.get<number>('maxIdleTimeBeforePause', 900);
       // Clamp to a reasonable range
@@ -97,22 +134,18 @@ export class Tracker extends EventEmitter {
       this.idleTimeoutMs = clamped * 1000;
 
       // Log current workspace state
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders || workspaceFolders.length === 0) {
+      const workspaceFolder =
+        this.workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
         this.log('No workspace folder found');
         return;
       }
-
-      const workspaceFolder = workspaceFolders[0];
       this.log(
         `Initializing watcher for workspace: ${workspaceFolder.uri.fsPath}`
       );
 
-      // Create watcher with specific glob pattern for code files
-      const filePattern = new vscode.RelativePattern(
-        workspaceFolder,
-        '**/*.{ts,js,py,java,c,cpp,h,hpp,css,scss,html,jsx,tsx,vue,php,rb,go,rs,swift,md,json,yml,yaml}'
-      );
+      // Create watcher for all files, then filter in code (noise reduction settings)
+      const filePattern = new vscode.RelativePattern(workspaceFolder, '**/*');
 
       // Dispose existing watcher if it exists
       if (this.watcher) {
@@ -129,19 +162,19 @@ export class Tracker extends EventEmitter {
       // Set up event handlers with logging (but throttled)
       this.watcher.onDidChange((uri) => {
         this.logThrottled(`Change detected in file: ${uri.fsPath}`);
-        this.handleChange(uri, 'changed');
+        this.queueChange(uri, 'changed');
         this.recordActivity();
       });
 
       this.watcher.onDidCreate((uri) => {
         this.logThrottled(`New file created: ${uri.fsPath}`);
-        this.handleChange(uri, 'added');
+        this.queueChange(uri, 'added');
         this.recordActivity();
       });
 
       this.watcher.onDidDelete((uri) => {
         this.logThrottled(`File deleted: ${uri.fsPath}`);
-        this.handleChange(uri, 'deleted');
+        this.queueChange(uri, 'deleted');
         this.recordActivity();
       });
 
@@ -293,35 +326,70 @@ export class Tracker extends EventEmitter {
       return false;
     }
 
-    // Check file extension
-    const fileExt = path.extname(filePath).toLowerCase().slice(1);
-    const trackedExtensions = [
-      'ts',
-      'js',
-      'py',
-      'java',
-      'c',
-      'cpp',
-      'h',
-      'hpp',
-      'css',
-      'scss',
-      'html',
-      'jsx',
-      'tsx',
-      'vue',
-      'php',
-      'rb',
-      'go',
-      'rs',
-      'swift',
-      'md',
-      'json',
-      'yml',
-      'yaml',
-    ];
+    const relativePathNormalized = relativePath.replace(/\\/g, '/');
 
-    return Boolean(fileExt) && trackedExtensions.includes(fileExt);
+    // Default ignored folders (segment match)
+    if (this.defaultIgnoredFoldersEnabled) {
+      const segments = relativePathNormalized.split('/');
+      if (segments.some((s) => this.defaultIgnoredFolders.has(s))) {
+        return false;
+      }
+    }
+
+    // Extension filtering (optional)
+    if (this.trackedExtensionsMode === 'list') {
+      const ext = path.extname(filePath).toLowerCase().replace(/^\./, '');
+      if (!ext) {
+        return false;
+      }
+      return this.trackedExtensionsSet.has(ext);
+    }
+
+    // all => allow any file that passes ignores
+    return true;
+  }
+
+  private queueChange(uri: vscode.Uri, type: 'added' | 'changed' | 'deleted') {
+    const key = uri.fsPath;
+    if (!this.isInitialized) {
+      this.log('Watcher not initialized, reinitializing...');
+      this.initialize();
+      return;
+    }
+    if (!this.shouldTrackFile(uri.fsPath)) {
+      return;
+    }
+
+    // Merge types within the debounce window
+    const prevType = this.pendingChangeTypes.get(key);
+    let nextType = type;
+    if (prevType) {
+      // Prefer 'added' over 'changed', and allow deleted->added to become added.
+      if (prevType === 'added' || type === 'added') {
+        nextType = 'added';
+      } else if (prevType === 'deleted' && type === 'changed') {
+        nextType = 'changed';
+      } else if (type === 'deleted') {
+        nextType = 'deleted';
+      } else {
+        nextType = 'changed';
+      }
+    }
+    this.pendingChangeTypes.set(key, nextType);
+
+    const existingTimer = this.debounceTimers.get(key);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const delay = this.changeDebounceMs;
+    const timer = setTimeout(() => {
+      this.debounceTimers.delete(key);
+      const finalType = this.pendingChangeTypes.get(key) || nextType;
+      this.pendingChangeTypes.delete(key);
+      this.handleChange(uri, finalType);
+    }, delay);
+    this.debounceTimers.set(key, timer);
   }
 
   private async handleChange(
@@ -335,6 +403,7 @@ export class Tracker extends EventEmitter {
         return;
       }
 
+      // shouldTrackFile already checked in queueChange; keep a defensive check
       if (!this.shouldTrackFile(uri.fsPath)) {
         return;
       }
@@ -393,6 +462,11 @@ export class Tracker extends EventEmitter {
   updateTrackingSettings(options: {
     maxIdleTimeBeforePauseSeconds?: number;
     trackKeystrokes?: boolean;
+    trackedExtensionsMode?: 'all' | 'list';
+    trackedExtensions?: string[];
+    defaultIgnoredFoldersEnabled?: boolean;
+    defaultIgnoredFolders?: string[];
+    changeDebounceMs?: number;
   }) {
     if (typeof options.trackKeystrokes === 'boolean') {
       this.trackKeystrokesEnabled = options.trackKeystrokes;
@@ -403,6 +477,46 @@ export class Tracker extends EventEmitter {
         Math.min(24 * 60 * 60, options.maxIdleTimeBeforePauseSeconds)
       );
       this.idleTimeoutMs = clamped * 1000;
+    }
+    if (options.trackedExtensionsMode) {
+      this.trackedExtensionsMode =
+        options.trackedExtensionsMode === 'list' ? 'list' : 'all';
+    }
+    if (Array.isArray(options.trackedExtensions)) {
+      this.setTrackedExtensions(options.trackedExtensions);
+    }
+    if (typeof options.defaultIgnoredFoldersEnabled === 'boolean') {
+      this.defaultIgnoredFoldersEnabled = options.defaultIgnoredFoldersEnabled;
+    }
+    if (Array.isArray(options.defaultIgnoredFolders)) {
+      this.setDefaultIgnoredFolders(options.defaultIgnoredFolders);
+    }
+    if (typeof options.changeDebounceMs === 'number') {
+      this.changeDebounceMs = Math.max(
+        0,
+        Math.min(10000, options.changeDebounceMs)
+      );
+    }
+  }
+
+  private setTrackedExtensions(exts: string[]) {
+    const normalized = exts
+      .map((e) =>
+        String(e || '')
+          .trim()
+          .toLowerCase()
+          .replace(/^\./, '')
+      )
+      .filter(Boolean);
+    this.trackedExtensionsSet = new Set(normalized);
+  }
+
+  private setDefaultIgnoredFolders(folders: string[]) {
+    const normalized = folders
+      .map((f) => String(f || '').trim())
+      .filter(Boolean);
+    if (normalized.length > 0) {
+      this.defaultIgnoredFolders = new Set(normalized);
     }
   }
 
@@ -462,5 +576,11 @@ export class Tracker extends EventEmitter {
       clearTimeout(this.activityTimeout);
       this.activityTimeout = null;
     }
+
+    for (const t of this.debounceTimers.values()) {
+      clearTimeout(t);
+    }
+    this.debounceTimers.clear();
+    this.pendingChangeTypes.clear();
   }
 }
