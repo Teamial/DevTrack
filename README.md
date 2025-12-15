@@ -6,6 +6,8 @@
 
 DevTrack is a productivity tool designed to seamlessly track and log your coding activities. It doesn't only provide a clear log of your coding activities but helps accurately reflect your contributions on GitHub. With a focus on simplicity and productivity, DevTrack integrates directly with your GitHub account to automatically create a history of your progress, making it easy to review, reflect, and share your work. DevTrack tracks changes to your code, commits updates to a dedicated repository, and enables you to visualize your progress over time. Whether you're working on personal projects, contributing to open source, or collaborating with a team, DevTrack is the ultimate tool for staying on top of your development journey.
 
+**Privacy note (v8+)**: DevTrack now records **metadata-only** tracking logs (JSON) in your tracking repository. It does **not** push code snippets or file contents.
+
 ---
 ## **Key Features**
 
@@ -59,6 +61,9 @@ DevTrack is a productivity tool designed to seamlessly track and log your coding
 ```json
 {
   "devtrack.repoName": "code-tracking",
+  "devtrack.repoVisibility": "private",
+  "devtrack.privacyLevel": "extensions",
+  "devtrack.autoStart": true,
   "devtrack.commitFrequency": 30,
   "devtrack.exclude": [
     "node_modules",
@@ -70,6 +75,7 @@ DevTrack is a productivity tool designed to seamlessly track and log your coding
 4. Start tracking with `DevTrack: Start Tracking` command in the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
 5. **View Your Progress**:
    - Visit your `code-tracking` repository on GitHub to see your logs.
+   - If your tracking repo is private, GitHub only shows private contributions on your profile if you enable the GitHub setting “Private contributions”.
 
 Want to showcase your DevTrack usage? [Open a PR](https://github.com/Teamial/DevTrack/pulls) to add your example!
 
